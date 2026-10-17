@@ -35,6 +35,33 @@ One-time setup (coordinator):
 Teachers then sign in on the website with their school account; every save is stored in the
 school database with their name attached (`updated_by`), and the browser keeps only a cache.
 
+### Set up every computer at once (admin)
+
+Sign in, open **Cloud sync** (admins only), and press **Save and publish everywhere** in the
+*Shared device setup* card:
+
+- **`cloud-config.json`** is committed to this website repository with the Supabase URL,
+  anon key and data-repository name — public values only.
+- The **full registry** (including the GitHub repository token) is written to the school
+  database table `app_config`, readable **only by admin accounts** (row-level security).
+
+Every computer that opens the website then:
+
+1. reads `cloud-config.json` on start-up, so **School account login is already configured**
+   (no manual URL/key entry);
+2. receives the repository token automatically after an **admin** signs in.
+
+Teachers never see the token and never need GitHub. Cloud sync itself now asks for the
+admin login when a teacher opens it.
+
+> Already ran `supabase-setup.sql` before this update? Run it again — it adds the
+> `app_config` table and admin policy (safe to re-run).
+
+First deployment without any token yet: run **`deploy.ps1`** in Windows PowerShell
+(prompts for the Supabase URL, anon key and a GitHub token, then commits
+`cloud-config.json`), or use **Download cloud-config.json** in the app and commit the file
+manually.
+
 ## GitHub cloud data (optional)
 
 The website code lives in this repository (public). **Student report data never does.**
