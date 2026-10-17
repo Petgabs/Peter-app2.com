@@ -65,7 +65,7 @@ function sbWorld(opts = {}) {
   const W = {
     users: new Map(), profiles: new Map(), files: new Map(), tokens: new Map(), calls: [], conflicts: new Map(),
     appConfig: opts.appConfig || null, publishedSite: opts.publishedSite || null,
-    appConfigMissing: !!opts.appConfigMissing, siteWritable: opts.siteWritable !== false, readFails: opts.readFails || 0,
+    appConfigMissing: !!opts.appConfigMissing, siteWritable: opts.siteWritable !== false, readFails: opts.readFails || 0, ghFiles: new Map(),
   };
   let seq = 1, stamps = 1;
   const nextStamp = () => new Date(Date.now() + (stamps++)).toISOString();
@@ -87,7 +87,20 @@ function sbWorld(opts = {}) {
     W.calls.push({ method: m, url: u, body: o.body, auth: h.Authorization, apikey: h.apikey });
     if (u === 'cloud-config.json' || (u.endsWith('/cloud-config.json') && !u.includes('api.github.com')))
       return W.publishedSite ? respond(200, JSON.parse(W.publishedSite)) : respond(404, {});
+    if (/^https:\/\/api\.github\.com\/user$/.test(u)) return respond(200, { login: 'petgabs82' });
     if (/https:\/\/api\.github\.com\/repos\/[^/]+\/[^/]+$/.test(u)) return respond(200, { private: true, permissions: { push: true } });
+    if (u.startsWith('https://api.github.com/repos/Petgabs/report-data/contents/')) {
+      const ghPath = decodeURIComponent(u.split('/contents/')[1].split('?')[0]);
+      if (m === 'GET') {
+        const f = W.ghFiles.get(ghPath);
+        return f ? respond(200, { sha: f.sha, content: Buffer.from(f.text, 'utf8').toString('base64') }) : respond(404, {});
+      }
+      if (m === 'PUT') {
+        const body = JSON.parse(o.body);
+        W.ghFiles.set(ghPath, { sha: 'g' + (W.ghSeq = (W.ghSeq || 0) + 1), text: Buffer.from(body.content, 'base64').toString('utf8') });
+        return respond(200, { content: { sha: W.ghFiles.get(ghPath).sha } });
+      }
+    }
     if (u.startsWith('https://api.github.com/repos/') && u.includes('/contents/cloud-config.json')) {
       if (!W.siteWritable) return respond(403, { message: 'Resource not accessible by personal access token' });
       if (m === 'GET') return W.publishedSite ? respond(200, { sha: 'site1' }) : respond(404, {});
@@ -126,7 +139,7 @@ function sbWorld(opts = {}) {
     const role = (W.profiles.get(who.id) || {}).role || 'teacher';
     if (u.includes('/rest/v1/app_config')) {
       if (W.appConfigMissing) return respond(404, { message: 'relation "public.app_config" does not exist' });
-      if (m === 'GET') return role !== 'admin' ? respond(200, []) : respond(200, W.appConfig ? [{ value: W.appConfig }] : []);
+      if (m === 'GET') return respond(200, W.appConfig ? [{ value: W.appConfig }] : []); // staff may read the registry
       if (m === 'POST') {
         if (role !== 'admin') return respond(403, { message: 'row-level security' });
         W.appConfig = JSON.parse(o.body).value; W.appConfigWrites = (W.appConfigWrites || 0) + 1;
@@ -242,7 +255,8 @@ const C = boot(world.fetch, SESSION_SEED());
 await wait(300);
 await C.loginCloud('hsc-wang', 'TeachPass1!');
 report('Teacher school sign-in works', C.q('#app').innerHTML.includes('app-shell'));
-report('Teacher does not receive the repository token', !(JSON.parse(C.ls('bzgfls-report-studio-github-v1') || '{}').token));
+report('Teacher is given the repository token from the school cloud', JSON.parse(C.ls('bzgfls-report-studio-github-v1') || '{}').token === GH_TOKEN);
+report('GitHub cloud turns on automatically for the teacher', C.q('#sync-pill').textContent.includes('GitHub'), C.q('#sync-pill').textContent);
 C.click(C.qa('.nav-btn').find(b => b.dataset.view === 'sync'));
 await wait(60);
 report('Cloud sync is admin-gated for teachers', !!C.q('#admin-login-form'));
@@ -273,6 +287,20 @@ C.submit(ef2);
 await wait(1600);
 const merged = world.files.get('data/reports/sub_eald.json').content;
 report('Concurrent writes merge both sides', JSON.stringify(merged).includes('RIVAL DEVICE ENTRY') && JSON.stringify(merged).includes('SECOND LOCAL EDIT'));
+report('Saves are mirrored to the GitHub repository automatically', world.ghFiles.size > 0 && [...world.ghFiles.values()].some(f => f.text.includes('SECOND LOCAL EDIT')), [...world.ghFiles.keys()].join(', ').slice(0, 80));
+C.click(C.qa('.nav-btn').find(b => b.dataset.view === 'sync'));
+if (C.q('#admin-login-form')) { C.q('#admin-login-form').querySelector('[name="username"]').value = 'hsc-year11-admin'; C.q('#admin-login-form').querySelector('[name="password"]').value = 'bzfls-hsc#-admin'; C.submit(C.q('#admin-login-form')); await wait(150); }
+report('Cloud sync page reports GitHub mirroring on', /On/.test(C.q('#sync-mirror-text').textContent || ''), C.q('#sync-mirror-text').textContent);
+
+// a device that already holds the repository token: local teacher login turns GitHub on
+const T = boot(world.fetch, {
+  'bzgfls-report-studio-github-v1': JSON.stringify({ repo: 'Petgabs/report-data', branch: 'main', token: GH_TOKEN, enabled: true }),
+});
+await wait(250);
+T.loginLocal('teacher');
+await wait(900);
+report('Local teacher login activates the GitHub cloud automatically', T.q('#sync-pill').textContent === 'Cloud: GitHub', T.q('#sync-pill').textContent);
+report('Local teacher login syncs through GitHub', world.ghFiles.size > 0, [...world.ghFiles.keys()].slice(0, 3).join(', '));
 
 /* ================================================================== */
 /* 3. STATUS MESSAGING (the reported "cloud error / not connected")    */

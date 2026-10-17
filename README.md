@@ -35,6 +35,24 @@ One-time setup (coordinator):
 Teachers then sign in on the website with their school account; every save is stored in the
 school database with their name attached (`updated_by`), and the browser keeps only a cache.
 
+### The GitHub cloud turns on automatically
+
+After a staff sign-in, the app reads the shared registry from the school database
+(`app_config`) and enables the GitHub connection by itself:
+
+- **Signed in with a school account** — the school cloud stays the primary store and every
+  save is **mirrored to the GitHub repository** in the background (newer entry wins if the
+  repository copy has changed). The badge reads **Cloud: school + GitHub**.
+- **Signed in with a local account** on a device that already holds the repository token —
+  GitHub becomes the active backend immediately, so reporting still syncs.
+
+Nothing needs to be opened or configured by teachers.
+
+> This requires `supabase-setup.sql` to be re-run once: the `app_config` table is now
+> readable by every signed-in staff member (writes remain admin-only) so their devices can
+> receive the repository token. If you prefer to keep the token admin-only, remove the
+> `staff read app config` policy — teachers then stay on the school cloud only.
+
 ### Set up every computer at once (admin)
 
 Sign in, open **Cloud sync** (admins only), and press **Save and publish everywhere** in the
