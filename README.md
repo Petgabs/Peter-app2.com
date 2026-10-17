@@ -97,6 +97,11 @@ reading the file back, and **Check setup** tells you when the file is present.
 
 - **"School database: the app_config table is missing"** — re-run `supabase-setup.sql`.
   Report data still syncs; only sharing settings between computers needs the table.
+- **"Data repository … is not available to this token"** — the private data repository does not
+  exist yet or was not included in the token. Create it at
+  `https://github.com/new?name=report-data&visibility=private`, then edit the token →
+  *Repository access* → add the repository with *Contents: Read and write*. GitHub sync is
+  optional: the school cloud already stores the report data, so you can simply disconnect GitHub.
 - **"Website repository: not published"** — the GitHub token must have *Contents: Read and
   write* on `Petgabs/Peter-app2.com`. Use **Download cloud-config.json** and commit the file
   instead.
