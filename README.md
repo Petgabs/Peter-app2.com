@@ -57,6 +57,39 @@ admin login when a teacher opens it.
 > Already ran `supabase-setup.sql` before this update? Run it again — it adds the
 > `app_config` table and admin policy (safe to re-run).
 
+### What the cloud badges mean
+
+| Badge | Meaning | What to do |
+| --- | --- | --- |
+| **Cloud: school / GitHub** | Connected and syncing | Nothing |
+| **Cloud: sign in** | The cloud is configured on this device, but no school account is signed in **or** the session ended | Sign in with the school account (or sign out of the local account and choose *School account*) |
+| **Cloud: off** | No backend is configured on this device | Admin: open **Cloud sync** → enter URL + anon key (or publish `cloud-config.json`) |
+| **Cloud: error** | Connected, but the last sync failed | The reason is shown on **Cloud sync**; press *Test connection* or *Sync now* |
+
+The dashboard shows the same explanation as a notice, and **Cloud sync** shows a banner with
+the exact next step. A failed publish to the website repository or a missing `app_config`
+table is *not* treated as a cloud failure — report sync keeps working.
+
+### Troubleshooting
+
+- **"School database: the app_config table is missing"** — re-run `supabase-setup.sql`.
+  Report data still syncs; only sharing settings between computers needs the table.
+- **"Website repository: not published"** — the GitHub token must have *Contents: Read and
+  write* on `Petgabs/Peter-app2.com`. Use **Download cloud-config.json** and commit the file
+  instead.
+- **A computer keeps showing an old Supabase project** — the published `cloud-config.json`
+  is the source of truth; fix it (or delete it) and reload.
+
+### Tests
+
+```bash
+cd tests && npm install && npm test
+```
+
+The suite boots the real `index.html` in jsdom against a simulated Supabase (auth, REST,
+RLS-style rules), GitHub Contents API and website file, covering sign-in, publish,
+auto-configuration, role gating, conflict merging and the status messages above.
+
 First deployment without any token yet: run **`deploy.ps1`** in Windows PowerShell
 (prompts for the Supabase URL, anon key and a GitHub token, then commits
 `cloud-config.json`), or use **Download cloud-config.json** in the app and commit the file
