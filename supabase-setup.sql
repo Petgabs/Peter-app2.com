@@ -56,8 +56,16 @@ create table if not exists public.app_config (
 
 alter table public.app_config enable row level security;
 
+-- Signed-in staff may READ the registry: it carries the Supabase address and
+-- the GitHub token so every teacher's device can turn the GitHub cloud on
+-- automatically. Only admins may write it. Remove the read policy below if you
+-- do not want staff devices to hold the repository token.
 drop policy if exists "admins manage app config" on public.app_config;
-create policy "admins manage app config" on public.app_config
+drop policy if exists "staff read app config" on public.app_config;
+drop policy if exists "admins write app config" on public.app_config;
+create policy "staff read app config" on public.app_config
+  for select to authenticated using (true);
+create policy "admins write app config" on public.app_config
   for all to authenticated
   using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'))
   with check (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'));
