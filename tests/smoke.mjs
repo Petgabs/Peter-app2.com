@@ -87,6 +87,7 @@ function sbWorld(opts = {}) {
     W.calls.push({ method: m, url: u, body: o.body, auth: h.Authorization, apikey: h.apikey });
     if (u === 'cloud-config.json' || (u.endsWith('/cloud-config.json') && !u.includes('api.github.com')))
       return W.publishedSite ? respond(200, JSON.parse(W.publishedSite)) : respond(404, {});
+    if (/https:\/\/api\.github\.com\/repos\/[^/]+\/[^/]+$/.test(u)) return respond(200, { private: true, permissions: { push: true } });
     if (u.startsWith('https://api.github.com/repos/') && u.includes('/contents/cloud-config.json')) {
       if (!W.siteWritable) return respond(403, { message: 'Resource not accessible by personal access token' });
       if (m === 'GET') return W.publishedSite ? respond(200, { sha: 'site1' }) : respond(404, {});
@@ -402,6 +403,53 @@ console.log('\n— GitHub repository backend —');
   const mergedText = files.has('data/reports/sub_eald.json') ? files.get('data/reports/sub_eald.json').text : '';
   report('409 conflict retried, newer entry wins', mergedText.includes('THEIR COMMENT') && !mergedText.includes('LOCAL EDIT.'));
   report('No uncaught errors (GitHub backend)', G.errs.length === 0, G.errs[0] || '');
+}
+
+/* ================================================================== */
+/* 5. TOKEN WITHOUT ACCESS TO THE DATA REPOSITORY                      */
+/* ================================================================== */
+console.log('\n— Repository token without access —');
+{
+  const fetchMock = async (url, o = {}) => {
+    const u = String(url);
+    const r = (s, j) => ({ ok: s >= 200 && s < 300, status: s, json: async () => j });
+    if (/api\.github\.com\/user$/.test(u)) return r(200, { login: 'petgabs82' });
+    if (/api\.github\.com\/repos\/Petgabs\/report-data$/.test(u)) return r(403, { message: 'Resource not accessible by integration' });
+    if (/api\.github\.com\/repos\/Petgabs\/Peter-app2\.com$/.test(u)) return r(200, { private: false, permissions: { push: true } });
+    if (u === 'cloud-config.json') return r(404, {});
+    return r(404, {});
+  };
+  const H = boot(fetchMock);
+  await wait(150);
+  H.loginLocal('admin');
+  H.click(H.qa('.nav-btn').find(b => b.dataset.view === 'sync'));
+  H.q('#sync-token').value = 'github_pat_NO_ACCESS';
+  H.submit(H.q('#sync-form'));
+  await wait(600);
+  const msg = H.q('#sync-test-result').textContent || '';
+  report('Save is blocked when the token cannot see the data repo', !JSON.parse(H.ls('bzgfls-report-studio-github-v1') || '{}').enabled, msg.split('\n')[0]);
+  report('Blocked save shows the two-step fix', /create it as a PRIVATE repository/.test(msg) && /Repository access/.test(msg), '');
+  report('Blocked save says GitHub is optional', /optional/.test(msg), '');
+  H.click(H.q('[data-action="cloud-check"]'));
+  await wait(500);
+  const diag = H.q('#cloud-diagnosis').textContent || '';
+  report('Unsaved token is treated as an optional backend, not a failure', /Optional GitHub data backend/.test(diag) && !/Data repository.*not available/.test(diag), diag.split('\n').filter(l => l.includes('Optional')).join('').slice(0, 90));
+
+  // a device where the token is saved but has lost access
+  const H2 = boot(fetchMock, {
+    'bzgfls-report-studio-github-v1': JSON.stringify({ repo: 'Petgabs/report-data', branch: 'main', token: 'github_pat_NO_ACCESS', enabled: true }),
+    'bzgfls-report-studio-cloud-v1': JSON.stringify({ backend: 'github' }),
+  });
+  await wait(300);
+  H2.loginLocal('admin');
+  await wait(120);
+  H2.click(H2.qa('.nav-btn').find(b => b.dataset.view === 'sync'));
+  H2.click(H2.q('[data-action="cloud-check"]'));
+  await wait(600);
+  const diag2 = H2.q('#cloud-diagnosis').textContent || '';
+  report('Setup check explains the inaccessible repo with the fix', /is not available to this token/.test(diag2) && /github\.com\/new/.test(diag2) && /Repository access/.test(diag2), diag2.split('\n').filter(l => l.includes('report-data')).join(' ').slice(0, 120));
+  report('Setup check still calls GitHub optional', /school cloud/i.test(diag2), '');
+  report('No uncaught errors (denied token)', H.errs.length === 0 && H2.errs.filter(e => !/favicon/.test(e)).length === 0, H.errs[0] || H2.errs[0] || '');
 }
 
 console.log(fails ? `\n${fails} FAILURES` : '\nALL TESTS PASSED');
