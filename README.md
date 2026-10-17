@@ -70,6 +70,29 @@ The dashboard shows the same explanation as a notice, and **Cloud sync** shows a
 the exact next step. A failed publish to the website repository or a missing `app_config`
 table is *not* treated as a cloud failure — report sync keeps working.
 
+### If the badge says "Cloud: off"
+
+That means this computer has no cloud address at all — normally because
+`cloud-config.json` has not been published to this repository yet, so nothing
+can configure itself. Fix it once, as the coordinator:
+
+1. Sign in (local Admin account works) → **Cloud sync**
+2. Press **Check setup** — it reports exactly what is missing: the website file,
+   the Supabase URL/key, the GitHub token, and the read/write permission on each repository
+3. Enter the Supabase **project URL + anon key**, and the GitHub token, then
+   **Save and publish everywhere**
+
+The token must include **both** repositories:
+
+| Repository | Permission | Why |
+| --- | --- | --- |
+| `Petgabs/report-data` (or your data repo) | Contents: Read and write | stores the report data |
+| `Petgabs/Peter-app2.com` (this website) | Contents: Read and write | lets the app commit `cloud-config.json` |
+
+If the token only covers the data repository, press **Download cloud-config.json** and
+commit that file to this repository with GitHub's web editor. Publishing is verified by
+reading the file back, and **Check setup** tells you when the file is present.
+
 ### Troubleshooting
 
 - **"School database: the app_config table is missing"** — re-run `supabase-setup.sql`.
