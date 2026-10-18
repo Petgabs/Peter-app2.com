@@ -75,8 +75,66 @@ create policy "staff read report data" on public.report_files
   for select to authenticated using (public.is_staff());
 
 drop policy if exists "staff write report data" on public.report_files;
-create policy "staff write report data" on public.report_files
-  for all to authenticated using (public.is_staff()) with check (public.is_staff());
+
+-- Teacher assignment per subject (migration v3): admins assign
+-- staff accounts to subjects; writes to a subject's report file
+-- are then limited to its assigned teachers (admins always may;
+-- a subject with no assignments stays open to all staff).
+create table if not exists public.subject_teachers (
+  subject_id text not null,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (subject_id, user_id)
+);
+alter table public.subject_teachers enable row level security;
+drop policy if exists "subject teachers staff read" on public.subject_teachers;
+create policy "subject teachers staff read" on public.subject_teachers
+  for select to authenticated using (public.is_staff());
+drop policy if exists "subject teachers admin insert" on public.subject_teachers;
+create policy "subject teachers admin insert" on public.subject_teachers
+  for insert to authenticated with check (public.is_admin());
+drop policy if exists "subject teachers admin delete" on public.subject_teachers;
+create policy "subject teachers admin delete" on public.subject_teachers
+  for delete to authenticated using (public.is_admin());
+
+drop policy if exists "profiles admin read" on public.profiles;
+create policy "profiles admin read" on public.profiles
+  for select to authenticated using (public.is_admin());
+
+create or replace function public.can_write_subject(p_path text)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+stable
+as $$
+declare sid text;
+begin
+  if public.is_admin() then return true; end if;
+  sid := regexp_replace(p_path, '^data/reports/(.+)\.json$', '');
+  if sid = p_path then return true; end if;
+  if not exists (select 1 from public.subject_teachers t where t.subject_id = sid) then
+    return true;
+  end if;
+  return exists (
+    select 1 from public.subject_teachers t
+    where t.subject_id = sid and t.user_id = auth.uid()
+  );
+end;
+$$;
+revoke execute on function public.can_write_subject(text) from public, anon;
+grant execute on function public.can_write_subject(text) to authenticated;
+
+create policy "report files gated insert" on public.report_files
+  for insert to authenticated
+  with check (public.is_staff() and public.can_write_subject(path));
+create policy "report files gated update" on public.report_files
+  for update to authenticated
+  using (public.is_staff() and public.can_write_subject(path))
+  with check (public.is_staff() and public.can_write_subject(path));
+create policy "report files gated delete" on public.report_files
+  for delete to authenticated
+  using (public.is_staff() and public.can_write_subject(path));
 
 -- 3b) Shared app configuration: the coordinator publishes the Supabase
 --     URL/anon key, GitHub repository and repository token once. Every
