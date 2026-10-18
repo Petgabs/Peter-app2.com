@@ -54,10 +54,10 @@ $$;
 revoke execute on function public.is_staff() from public, anon;
 grant execute on function public.is_staff() to authenticated;
 
--- 2) profiles: staff may read; only admins may write ---------
+-- 2) profiles: own row readable; only admins may write ---------
 drop policy if exists "staff read profiles" on public.profiles;
 create policy "staff read profiles" on public.profiles
-  for select to authenticated using (public.is_staff());
+  for select to authenticated using (id = auth.uid());
 
 drop policy if exists "admin manage profiles" on public.profiles;
 drop policy if exists "admin insert profiles" on public.profiles;
