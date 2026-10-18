@@ -66,7 +66,7 @@ function sbWorld(opts = {}) {
   const W = {
     users: new Map(), profiles: new Map(), files: new Map(), tokens: new Map(), calls: [], conflicts: new Map(),
     appConfig: opts.appConfig || null, publishedSite: opts.publishedSite || null,
-    appConfigMissing: !!opts.appConfigMissing, profile500: !!opts.profile500, siteWritable: opts.siteWritable !== false, readFails: opts.readFails || 0, ghFiles: new Map(),
+    appConfigMissing: !!opts.appConfigMissing, profile500: !!opts.profile500, appConfig500: !!opts.appConfig500, siteWritable: opts.siteWritable !== false, readFails: opts.readFails || 0, ghFiles: new Map(),
   };
   let seq = 1, stamps = 1;
   const nextStamp = () => new Date(Date.now() + (stamps++)).toISOString();
@@ -140,7 +140,7 @@ function sbWorld(opts = {}) {
     const role = (W.profiles.get(who.id) || {}).role || 'teacher';
     if (u.includes('/rest/v1/app_config')) {
       if (W.appConfigMissing) return respond(404, { message: 'relation "public.app_config" does not exist' });
-      if (m === 'GET') return respond(200, W.appConfig ? [{ value: W.appConfig }] : []); // staff may read the registry
+      if (m === 'GET') { if (W.appConfig500) return respond(500, { code: '42P17', message: 'infinite recursion detected in policy for relation "profiles"' }); return respond(200, W.appConfig ? [{ value: W.appConfig }] : []); } // staff may read the registry
       if (m === 'POST') {
         if (role !== 'admin') return respond(403, { message: 'row-level security' });
         W.appConfig = JSON.parse(o.body).value; W.appConfigWrites = (W.appConfigWrites || 0) + 1;
@@ -808,6 +808,43 @@ console.log('\n— PDF race after sign-in, stored CAL letters —');
   report('Already-stored raw CAL letters render as descriptors with dots',
     stage.includes('Consistently&nbsp;') && stage.includes('●●●●') && stage.includes('●○○○'));
   report('No uncaught errors (race tests)', app.errs.length === 0, app.errs[0] || '');
+}
+
+
+/* ================================================================== */
+/* 9. "TEST CONNECTION" MUST NOT CLAIM SUCCESS ON 42P17                */
+/* ================================================================== */
+console.log('\n— Test connection honesty —');
+{
+  report('sbTestConnection probes profiles and fails on any non-2xx app_config',
+    html.includes("rest/v1/profiles?id=eq.'+encodeURIComponent(sbSession.user.id)+'&select=role'")
+    && html.includes('the database is NOT fully set up yet'));
+
+  const wCfg = sbWorld({ appConfig500: true });
+  const D = boot(wCfg.fetch, SESSION_SEED());
+  await wait(250);
+  await D.loginCloud('hsc-admin', 'AdminPass1!');
+  await wait(400);
+  D.click(D.qa('.nav-btn').find(b => b.dataset.view === 'sync'));
+  D.click(D.q('[data-action="sb-test"]'));
+  await wait(900);
+  const msgD = (D.q('#sb-test-result') || {}).textContent || '';
+  report('app_config HTTP 500 makes Test connection fail, not claim success',
+    msgD.includes('app_config') && msgD.includes('NOT fully set up') && !msgD.includes('teachers can sign in'), msgD.slice(0, 110));
+
+  const wProf = sbWorld({ profile500: true });
+  const E = boot(wProf.fetch, SESSION_SEED());
+  await wait(250);
+  await E.loginCloud('hsc-admin', 'AdminPass1!');
+  await wait(400);
+  E.click(E.qa('.nav-btn').find(b => b.dataset.view === 'sync'));
+  if (E.q('#admin-login-form')) { E.loginLocalAdminInModal(); await wait(300); }
+  E.click(E.q('[data-action="sb-test"]'));
+  await wait(1600);
+  const msgE = (E.q('#sb-test-result') || {}).textContent || '';
+  report('profiles HTTP 500 (42P17) makes Test connection fail with the repair pointer',
+    msgE.includes('profile cannot be read') && msgE.includes('v2-rls-repair'), msgE.slice(0, 110));
+  report('No uncaught errors (honesty tests)', D.errs.length === 0 && E.errs.length === 0, (D.errs[0] || E.errs[0] || ''));
 }
 
 console.log(fails ? `\n${fails} FAILURES` : '\nALL TESTS PASSED');

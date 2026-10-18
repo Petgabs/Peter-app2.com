@@ -200,12 +200,16 @@ async function sbTestConnection(url,anon){
   if(!probe.ok)throw Error('Database probe failed (HTTP '+probe.status+'). Run supabase-setup.sql in the SQL editor.');
   if(sbReady()&&sbSession&&String(sbConfig.url||'').replace(/\/+$/,'')===root){
     const auth={apikey:anon,Authorization:'Bearer '+(await sbEnsureSession()).access_token};
+    const prof=await fetch(root+'/rest/v1/profiles?id=eq.'+encodeURIComponent(sbSession.user.id)+'&select=role',{headers:auth});
+    if(prof.status===404)throw Error('Signed in, but the profiles table is missing. Re-run supabase-setup.sql.');
+    if(!prof.ok)throw Error('Signed in, but your staff profile cannot be read (HTTP '+prof.status+'). The database row-level security policies need the repair migration (supabase-migration-2026-10-18-v2-rls-repair.sql) — until the school applies it, roles cannot be verified.');
     const files=await fetch(root+'/rest/v1/report_files?select=path&limit=1',{headers:auth});
     if(files.status===404)throw Error('Signed in, but the report_files table is missing. Re-run supabase-setup.sql.');
     if(files.status===401||files.status===403)throw Error('Signed in, but this account cannot read report data. Check the row-level security policies in supabase-setup.sql.');
     if(!files.ok)throw Error('Report data probe failed (HTTP '+files.status+').');
     const cfg=await fetch(root+'/rest/v1/app_config?select=key&limit=1',{headers:auth});
     if(cfg.status===404)throw Error('Report data is ready, but the app_config table is missing — re-run supabase-setup.sql so cloud settings can be shared (report sync itself already works).');
+    if(!cfg.ok)throw Error('Report data is ready, but the shared cloud settings (app_config) cannot be read (HTTP '+cfg.status+'). The database row-level security policies need the repair migration (supabase-migration-2026-10-18-v2-rls-repair.sql) — the database is NOT fully set up yet.');
   }
   return true;
 }
