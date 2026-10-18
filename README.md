@@ -14,7 +14,11 @@ assets/*.png            school emblem, school-name image and report watermark
 cloud-config.json       published Supabase URL/anon key + repository settings
 supabase-setup.sql      run once in the Supabase SQL editor
 deploy.ps1              first-time publish helper for Windows
-tests/smoke.mjs         98 assertions; the app is booted in jsdom
+tests/smoke.mjs         the app booted in jsdom against mocked clouds
+supabase-migration-2026-10-18-fix-rls-recursion.sql
+                        reviewed fix for the 42P17 RLS recursion (NOT yet
+                        applied to the live project) + its rollback file;
+                        see REPAIR-2026-10-18.md
 ```
 
 Nothing is bundled or transpiled — the files are served exactly as they are committed.
