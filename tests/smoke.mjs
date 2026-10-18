@@ -678,6 +678,18 @@ console.log('\n— Repair: role failure, CAL profiles, cohort guard —');
     (P.q('#sync-pill') || {}).textContent || '');
   report('Cloud badge refuses to say "school" while role checks fail',
     (P.q('#sync-pill') || {}).textContent === 'Cloud: error', (P.q('#sync-pill') || {}).textContent || '');
+  report('Profile failure never escalates to the fatal-error banner',
+    !html.includes('showFatalError(sbProfileError)') && (P.q('#fatal-error') || {}).hidden !== false);
+
+  // Session restore on reload (the reported screenshot): same 500, still no red banner
+  const P2 = boot(w500.fetch, {
+    ...SESSION_SEED(),
+    'bzgfls-report-studio-sb-session-v1': JSON.stringify({ access_token: 'at_seed', refresh_token: 'rt_seed', expires_at: Math.floor(Date.now() / 1000) + 3600, user: { id: w500.adminId, email: 'admin@school.test' }, role: 'admin', username: 'hsc-admin', display_name: 'Admin' }),
+  });
+  await wait(1800);
+  report('Reload with a saved session does not show the fatal banner either',
+    (P2.q('#fatal-error') || {}).hidden !== false && (P2.q('.topbar-meta') || { textContent: '' }).textContent.includes('Teacher session'),
+    (P2.q('#fatal-error') || {}).textContent || '');
 
   // CAL import: A-D profile codes normalise; MAD descriptors untouched; preview dots
   const app = boot(async () => { throw new TypeError('offline test'); });
