@@ -66,7 +66,7 @@ function sbWorld(opts = {}) {
   const W = {
     users: new Map(), profiles: new Map(), files: new Map(), tokens: new Map(), calls: [], conflicts: new Map(),
     appConfig: opts.appConfig || null, publishedSite: opts.publishedSite || null,
-    appConfigMissing: !!opts.appConfigMissing, profile500: !!opts.profile500, appConfig500: !!opts.appConfig500, siteWritable: opts.siteWritable !== false, readFails: opts.readFails || 0, ghFiles: new Map(),
+    appConfigMissing: !!opts.appConfigMissing, profile500: !!opts.profile500, appConfig500: !!opts.appConfig500, assignments: new Map(), siteWritable: opts.siteWritable !== false, readFails: opts.readFails || 0, ghFiles: new Map(),
   };
   let seq = 1, stamps = 1;
   const nextStamp = () => new Date(Date.now() + (stamps++)).toISOString();
@@ -147,13 +147,26 @@ function sbWorld(opts = {}) {
         return respond(201, []);
       }
     }
+    if (u.includes('/rest/v1/subject_teachers')) {
+      if (m === 'GET') { const rows = []; for (const [sid, set] of W.assignments) for (const uid of set) rows.push({ subject_id: sid, user_id: uid }); return respond(200, rows); }
+      if (role !== 'admin') return respond(403, { message: 'row-level security' });
+      if (m === 'DELETE') { const sid = decodeURIComponent((u.match(/subject_id=eq\.([^&]+)/) || [])[1] || ''); W.assignments.delete(sid); return respond(204, {}); }
+      if (m === 'POST') { for (const r of JSON.parse(o.body)) { if (!W.assignments.has(r.subject_id)) W.assignments.set(r.subject_id, new Set()); W.assignments.get(r.subject_id).add(r.user_id); } return respond(201, []); }
+    }
     if (u.includes('/rest/v1/profiles')) {
       if (W.profile500) return respond(500, { code: '42P17', message: 'infinite recursion detected in policy for relation "profiles"' });
       const id = decodeURIComponent((u.match(/id=eq\.([^&]+)/) || [])[1] || '');
+      if (!id) return respond(200, [...W.profiles.entries()].map(([pid, p]) => ({ id: pid, ...p })));
       const p = W.profiles.get(id);
-      return respond(200, p ? [p] : []);
+      return respond(200, p ? [{ id, ...p }] : []);
     }
     if (u.includes('/rest/v1/report_files')) {
+      if (m !== 'GET') {
+        let wpath = decodeURIComponent((u.match(/path=eq\.([^&]+)/) || [])[1] || '');
+        if (!wpath && o.body) { try { wpath = JSON.parse(o.body).path || ''; } catch (e) {} }
+        const wm = /^data\/reports\/(.+)\.json$/.exec(wpath), wset = wm && W.assignments.get(wm[1]);
+        if (wset && wset.size && role !== 'admin' && !wset.has(who.id)) return respond(403, { message: 'subject assignment: not your subject' });
+      }
       if (m === 'GET' && u.includes('select=path')) {
         if (W.readFails > 0) { W.readFails--; return respond(503, { message: 'unavailable' }); }
         return respond(200, [...W.files.keys()].map(p => ({ path: p })));
@@ -845,6 +858,58 @@ console.log('\n— Test connection honesty —');
   report('profiles HTTP 500 (42P17) makes Test connection fail with the repair pointer',
     msgE.includes('profile cannot be read') && msgE.includes('v2-rls-repair'), msgE.slice(0, 110));
   report('No uncaught errors (honesty tests)', D.errs.length === 0 && E.errs.length === 0, (D.errs[0] || E.errs[0] || ''));
+}
+
+
+/* ================================================================== */
+/* 10. TEACHER ASSIGNMENT PER SUBJECT                                  */
+/* ================================================================== */
+console.log('\n— Teacher assignment per subject —');
+{
+  const mig3 = fs.readFileSync(new URL('../supabase-migration-2026-10-18-v3-subject-assignments.sql', import.meta.url), 'utf8');
+  report('v3 migration creates gated subject assignments with rollback',
+    mig3.includes('subject_teachers') && mig3.includes('can_write_subject')
+    && fs.existsSync(new URL('../supabase-migration-2026-10-18-v3-subject-assignments.rollback.sql', import.meta.url)));
+  report('App fetches assignments and filters the subject grid',
+    html.includes('sbFetchSubjectAccess') && html.includes('visibleSubjects().map') && html.includes('data-action="assign-modal"'));
+
+  const wA = sbWorld();
+  wA.assignments.set('sub_eald', new Set([wA.adminId])); // EAL/D locked to admin only
+  wA.assignments.set('sub_cal', new Set([wA.wangId]));   // CAL assigned to the teacher
+  const T = boot(wA.fetch, SESSION_SEED());
+  await wait(250);
+  await T.loginCloud('hsc-wang', 'TeachPass1!');
+  await wait(600);
+  T.click(T.qa('.nav-btn').find(b => b.dataset.view === 'subjects'));
+  const grid = T.q('.subject-grid').textContent;
+  report('Teacher sees her assigned subject and open subjects',
+    grid.includes('Chinese and Literature') && grid.includes('Mathematics Advanced'));
+  report('Teacher does NOT see a subject assigned only to others',
+    !grid.includes('English as an Additional'));
+  T.click(T.qa('.nav-btn').find(b => b.dataset.view === 'admin'));
+  report('Teachers get no Assign buttons (admin surface stays gated)',
+    !T.q('[data-action="assign-modal"]') && T.d.body.textContent.includes('Admin sign-in required'));
+
+  // Admin assigns the teacher to MAD through the UI; database mock records it
+  const Adm = boot(wA.fetch, SESSION_SEED());
+  await wait(250);
+  await Adm.loginCloud('hsc-admin', 'AdminPass1!');
+  await wait(600);
+  Adm.click(Adm.qa('.nav-btn').find(b => b.dataset.view === 'admin'));
+  Adm.click(Adm.qa('[data-action="admin-tab"]').find(b => b.dataset.tab === 'subjects'));
+  const madRowBtn = Adm.qa('[data-action="assign-modal"]')[1]; // seed order: EAL/D, MAD, ...
+  Adm.click(madRowBtn);
+  await wait(500);
+  report('Assignment modal lists the teacher accounts',
+    (Adm.q('#assign-form') || { textContent: '' }).textContent.includes('Ms Wang'));
+  const box = Adm.q('#assign-form input[name="assign"]');
+  box.checked = true;
+  Adm.submit(Adm.q('#assign-form'));
+  await wait(500);
+  report('Saving the assignment writes it to the database',
+    (wA.assignments.get('sub_mad') || new Set()).has(wA.wangId),
+    [...(wA.assignments.get('sub_mad') || [])].join(','));
+  report('No uncaught errors (assignment tests)', T.errs.length === 0 && Adm.errs.length === 0, (T.errs[0] || Adm.errs[0] || ''));
 }
 
 console.log(fails ? `\n${fails} FAILURES` : '\nALL TESTS PASSED');
