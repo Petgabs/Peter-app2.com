@@ -8,14 +8,34 @@ Year 11 Preliminary Student Report Studio — a single-page app published on Git
 index.html              the whole application (UI, data model, cloud sync)   ~58 KB gzipped
 vendor/pdf-libs.js      html2canvas + jsPDF + pako — fetched only when a PDF is
                         downloaded, so it is never paid for on a normal visit
+sw.js                   service worker: caches the app shell so a computer that
+                        has visited once can reopen the app with no network
 assets/*.png            school emblem, school-name image and report watermark
 cloud-config.json       published Supabase URL/anon key + repository settings
 supabase-setup.sql      run once in the Supabase SQL editor
 deploy.ps1              first-time publish helper for Windows
-tests/smoke.mjs         75 assertions; the app is booted in jsdom
+tests/smoke.mjs         98 assertions; the app is booted in jsdom
 ```
 
 Nothing is bundled or transpiled — the files are served exactly as they are committed.
+
+## Safety nets for everyday use
+
+- **Recovery snapshots:** before any import, student/subject deletion or local reset,
+  the current workspace is snapshotted in the browser (Admin -> Data transfer, newest
+  five). "Snapshot now" takes one manually; restoring a snapshot snapshots the
+  current workspace first, so a restore can itself be undone. Export the full JSON
+  backup as well before major changes — snapshots live in the same browser.
+- **Draft autosave:** while typing a report entry, a draft is kept on this device and
+  restored if the browser is closed before Save. Saving the entry clears its draft.
+- **Last edited:** subject rosters show when an entry was saved and by whom.
+- **Idle lock:** after 45 minutes without activity the app signs itself out on that
+  computer (work is already saved). Override for tests with `window.__IDLE_LOCK_MS__`.
+- **Error banner:** an unexpected error shows a red banner explaining that data is
+  still saved, instead of a blank page.
+- **CSV roster import:** Admin -> Students -> Import CSV roster with columns
+  `pinyin,english,classTeacher,subjects` (subjects = subject codes separated by `;`).
+  Existing students are skipped. The roster lists also have a name search.
 
 ## Working without a connection, and staying current
 
@@ -163,9 +183,13 @@ RLS-style rules), GitHub Contents API and website file, covering sign-in, publis
 auto-configuration, role gating, conflict merging, the status messages above, the offline
 banner, the background refresh and the page-weight limits (external libraries, image files).
 
-**75 assertions.** They also run automatically on every push and pull request through
+**98 assertions**, including recovery snapshots, CSV import, draft restore across a
+restart, modal Escape/focus behaviour, the idle lock and the error banner. They also run automatically on every push and pull request through
 `.github/workflows/tests.yml`, which additionally parses the app script and checks that
 `vendor/pdf-libs.js` and the image files are still present.
+
+> Note: one-click PDFs are page images, so their text is not selectable. Use
+> **Generate PDF / Print** when a parent or the school needs selectable text.
 
 The browser PDF path (Download PDF) cannot be exercised in jsdom, because jsdom does not
 fetch external scripts. To check it in a browser: open a report preview, press **Download
