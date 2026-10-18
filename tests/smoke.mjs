@@ -738,5 +738,65 @@ console.log('\n— Repair: role failure, CAL profiles, cohort guard —');
   }
 }
 
+
+/* ================================================================== */
+/* 8. PDF RACE + STORED CAL LETTERS                                    */
+/* ================================================================== */
+console.log('\n— PDF race after sign-in, stored CAL letters —');
+{
+  report('PDF download waits for the initial cloud sync',
+    html.includes('await waitForInitialSync()') && html.includes('let initialSyncPromise'));
+  report('Background sync never re-renders over an open preview',
+    (html.match(/!previewState&&!document\.body\.classList\.contains\('preview-mode'\)/g) || []).length >= 2);
+  report('Sign-out resets the initial-sync promise',
+    html.includes('initialSyncPromise=null;authRole=null'));
+  report('Profiles policy is least-privilege (own row only)',
+    fs.readFileSync(new URL('../supabase-migration-2026-10-18-fix-rls-recursion.sql', import.meta.url), 'utf8')
+      .includes('using (id = auth.uid())'));
+
+  // Cloud already stores RAW CAL letters (pre-fix data). The app must render
+  // descriptors + dots without the stored record being rewritten first.
+  const seedAll = JSON.parse(html.match(/<script id="seed-data" type="application\/json">([\s\S]*?)<\/script>/)[1]);
+  const subs = seedAll.subjects.map(x => ({ id: 'sub_' + x.code.toLowerCase().replace(/[^a-z0-9]/g, ''), code: x.code, name: x.name, units: x.units, teachers: 'T', criteria: [...x.criteria], updatedAt: '' }));
+  const cal = subs.find(x => x.code === 'CAL');
+  const localState = {
+    version: 1, schoolEn: 'Test School', schoolCn: '', academicYear: '2027', period: 'Academic Year 2027', issueDate: '2027-06-01',
+    staff: { classTeacher: 'T', hscCoordinator: 'H', deputyPrincipal: 'D' }, subjects: subs,
+    students: [{ id: 'st_test01', pinyin: 'Ce Shi', english: 'Teststudent', classTeacher: '', subjectIds: [cal.id] }],
+    reports: {}, summaries: {}, settingsUpdatedAt: '', tombstones: { students: {}, subjects: {}, entries: {} },
+  };
+  const w = sbWorld();
+  w.files.set('data/reports/' + cal.id + '.json', {
+    content: { subjectId: cal.id, entries: { st_test01: { criteriaGrades: ['A', 'B', 'C', 'D'], overallGrade: 'B', profile: ['A', 'B', 'C', 'D'], comment: 'Stored CAL comment.', updatedAt: '2027-06-01T00:00:00.000Z' } }, entryTombstones: {} },
+    updated_at: new Date().toISOString(),
+  });
+  // Slow the cloud pull down so the preview is opened mid-sync (the reported race).
+  const slowFetch = async (u, o) => { if (String(u).includes('/rest/v1/report_files')) await wait(1200); return w.fetch(u, o); };
+  const app = boot(slowFetch, {
+    'bzgfls-report-studio-supabase-v1': JSON.stringify({ url: SB, anon: ANON, enabled: true }),
+    'bzgfls-report-studio-cloud-v1': JSON.stringify({ backend: 'supabase' }),
+    'bzgfls-year11-preliminary-report-studio-v1': JSON.stringify(localState),
+  });
+  await wait(250);
+  await app.loginCloud('hsc-wang', 'TeachPass1!');
+  // Immediately open the full preview while the first pull is still running.
+  app.click(app.qa('.nav-btn').find(b => b.dataset.view === 'reports'));
+  app.click(app.q('[data-action="preview"]'));
+  report('Preview opens immediately after sign-in', app.d.body.classList.contains('preview-mode'));
+  // wait on a condition, not a fixed sleep: the slow pull must land the entry
+  for (let i = 0; i < 40 && !(app.store() && app.store().reports && app.store().reports.st_test01); i++) await wait(500);
+  report('Initial sync does not hide the open preview', app.d.body.classList.contains('preview-mode'));
+  const stored = app.store().reports.st_test01[cal.id];
+  report('Stored CAL entry keeps its academic grade and comment after sync',
+    stored.overallGrade === 'B' && stored.comment === 'Stored CAL comment.', JSON.stringify(stored.profile));
+  app.click(app.q('[data-action="close-preview"]'));
+  app.click(app.qa('.nav-btn').find(b => b.dataset.view === 'reports'));
+  app.click(app.q('[data-action="preview"]'));
+  const stage = app.q('#report-stage').innerHTML;
+  report('Already-stored raw CAL letters render as descriptors with dots',
+    stage.includes('Consistently&nbsp;') && stage.includes('●●●●') && stage.includes('●○○○'));
+  report('No uncaught errors (race tests)', app.errs.length === 0, app.errs[0] || '');
+}
+
 console.log(fails ? `\n${fails} FAILURES` : '\nALL TESTS PASSED');
 process.exit(fails ? 1 : 0);

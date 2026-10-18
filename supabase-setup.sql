@@ -57,7 +57,7 @@ alter table public.report_files enable row level security;
 
 drop policy if exists "staff read profiles" on public.profiles;
 create policy "staff read profiles" on public.profiles
-  for select to authenticated using (public.is_staff());
+  for select to authenticated using (id = auth.uid());
 
 drop policy if exists "admin manage profiles" on public.profiles;
 drop policy if exists "admin insert profiles" on public.profiles;
