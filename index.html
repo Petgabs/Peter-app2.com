@@ -154,8 +154,9 @@ async function sbSignIn(usernameOrEmail,password){
 async function sbFetchProfile(){
   if(!sbSession||!sbSession.user)return null;
   try{
-    const res=await fetch(sbRoot()+'/rest/v1/profiles?id=eq.'+encodeURIComponent(sbSession.user.id)+'&select=role,username,display_name',{method:'GET',headers:sbHeaders()});
-    if(!res.ok){sbProfileError='Your staff profile could not be verified (HTTP '+res.status+'). You are signed in with teacher-level access only; admin features stay locked. Ask the coordinator to check the school cloud setup.';syncState.lastError=sbProfileError;return sbSession;}
+    let res=await fetch(sbRoot()+'/rest/v1/profiles?id=eq.'+encodeURIComponent(sbSession.user.id)+'&select=role,username,display_name',{method:'GET',headers:sbHeaders()});
+    if(!res.ok&&res.status>=500){await new Promise(r=>setTimeout(r,700));res=await fetch(sbRoot()+'/rest/v1/profiles?id=eq.'+encodeURIComponent(sbSession.user.id)+'&select=role,username,display_name',{method:'GET',headers:sbHeaders()});}
+    if(!res.ok){sbProfileError='Your staff profile could not be verified (HTTP '+res.status+'). You are signed in with teacher-level access only; admin features stay locked. Ask the coordinator to check the school cloud setup (database policy fix pending).';syncState.lastError=sbProfileError;return sbSession;}
     const rows=await res.json();const p=rows&&rows[0];
     if(!p){sbProfileError='No staff profile was found for this account. You are signed in with teacher-level access only; ask the coordinator to create your profile.';syncState.lastError=sbProfileError;return sbSession;}
     sbProfileError='';sbSession.role=p.role==='admin'?'admin':'teacher';sbSession.username=p.username||'';sbSession.display_name=p.display_name||'';saveSbSession(sbSession);
@@ -576,7 +577,7 @@ async function bootCloud(){
       await sbFetchProfile();
       authRole=(!sbProfileError&&sbSession.role==='admin')?'admin':'teacher';
       writeAuth(authRole);
-      if(sbProfileError)showFatalError(sbProfileError);
+      if(sbProfileError){const fe=document.getElementById('fatal-error');if(fe)fe.hidden=true;setTimeout(()=>toast(sbProfileError,'error'),350);}
       chooseBackend();
       render();
     }catch(err){
@@ -962,7 +963,7 @@ document.addEventListener('keydown',e=>{const modal=modalRoot.querySelector('.mo
 let lastActivity=Date.now();
 for(const evt of ['click','keydown','input'])window.addEventListener(evt,()=>{lastActivity=Date.now();},{passive:true});
 setInterval(()=>{if(authRole&&Date.now()-lastActivity>IDLE_LOCK_MS)lockForIdle();},1000);
-function showFatalError(err){console.error(err);const el=document.getElementById('fatal-error');if(el){el.textContent='Something went wrong in the app ('+((err&&err.message)||err)+'). Your saved data is still in this browser and in the cloud — reload the page, and export a backup from Admin → Data transfer if it happens again.';el.hidden=false;}}
+function showFatalError(err){if(String((err&&err.message)||err).includes('staff profile could not be verified')){toast(String((err&&err.message)||err),'error');return;}console.error(err);const el=document.getElementById('fatal-error');if(el){el.textContent='Something went wrong in the app ('+((err&&err.message)||err)+'). Your saved data is still in this browser and in the cloud — reload the page, and export a backup from Admin → Data transfer if it happens again.';el.hidden=false;}}
 window.addEventListener('error',e=>{if(e&&e.message)showFatalError(e.error||e.message);});
 window.addEventListener('unhandledrejection',e=>{showFatalError(e.reason||'unhandled promise rejection');});
 if('serviceWorker' in navigator&&(location.protocol==='https:'||location.hostname==='localhost'||location.hostname==='127.0.0.1')){navigator.serviceWorker.register('sw.js').catch(err=>console.warn('Service worker not registered:',err));}
