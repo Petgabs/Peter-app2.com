@@ -15,7 +15,7 @@ const report = (name, ok, extra = '') => {
 /* ------------------------------------------------------------------ */
 /* Shared jsdom boot                                                   */
 /* ------------------------------------------------------------------ */
-function boot(fetchMock, seed = {}) {
+function boot(fetchMock, seed = {}, globals = {}) {
   const errs = [];
   const vc = new VirtualConsole();
   vc.on('jsdomError', e => errs.push('jsdomError: ' + e.message));
@@ -25,6 +25,7 @@ function boot(fetchMock, seed = {}) {
   w.TextEncoder = TextEncoder; w.TextDecoder = TextDecoder;
   w.scrollTo = () => {}; w.confirm = () => true; w.alert = () => {}; w.print = () => {};
   w.fetch = fetchMock;
+  for (const [k, v] of Object.entries(globals)) w[k] = v;
   for (const [k, v] of Object.entries(seed)) w.localStorage.setItem(k, v);
   for (const s of [...d.querySelectorAll('script:not([type])')]) w.eval(s.textContent);
   const q = s => d.querySelector(s), qa = s => [...d.querySelectorAll(s)];
@@ -194,6 +195,32 @@ const SESSION_SEED = () => ({
 });
 
 /* ================================================================== */
+/* 0. PAGE WEIGHT: external libraries and image files                  */
+/* ================================================================== */
+console.log('\n— Page weight —');
+const htmlBytes = Buffer.byteLength(html, 'utf8');
+report('index.html no longer embeds the PDF libraries', !/html2canvas 1\.4\.1/.test(html) && htmlBytes < 300000, (htmlBytes / 1024).toFixed(0) + ' KB');
+const vendorSrc = fs.readFileSync(new URL('../vendor/pdf-libs.js', import.meta.url), 'utf8');
+report('vendor/pdf-libs.js carries the PDF bundle', vendorSrc.length > 500000 && vendorSrc.includes('html2canvas') && vendorSrc.includes('jspdf'), (vendorSrc.length / 1024).toFixed(0) + ' KB');
+report('The download path loads the bundle on demand', /if\(!\(await ensurePdfLibs\(\)\)\)/.test(html) && /el\.src='vendor\/pdf-libs\.js'/.test(html));
+const seedAssets = JSON.parse(html.match(/<script id="seed-data" type="application\/json">([\s\S]*?)<\/script>/)[1]).assets;
+report('School images are files, not inline data URLs', seedAssets.emblem === 'assets/emblem.png' && seedAssets.schoolName === 'assets/school-name.png' && seedAssets.watermark === 'assets/watermark.png', JSON.stringify(seedAssets));
+// execute the extracted bundle in a bare window: proves the file is complete and
+// still defines the renderer globals the app waits for
+{
+  const libDom = new JSDOM('<!doctype html><html><head></head><body></body></html>', { runScripts: 'outside-only', pretendToBeVisual: true });
+  libDom.window.TextEncoder = TextEncoder; libDom.window.TextDecoder = TextDecoder; // jsdom lacks them; every browser has them
+  libDom.window.eval(vendorSrc);
+  report('The extracted bundle still defines the PDF renderer',
+    typeof libDom.window.jspdf?.jsPDF === 'function' && typeof libDom.window.html2canvas === 'function',
+    'jsPDF=' + typeof libDom.window.jspdf?.jsPDF + ' html2canvas=' + typeof libDom.window.html2canvas);
+}
+for (const f of ['assets/emblem.png', 'assets/school-name.png', 'assets/watermark.png']) {
+  const buf = fs.readFileSync(new URL('../' + f, import.meta.url));
+  report(f + ' exists as a real PNG', buf.length > 1000 && buf.subarray(1, 4).toString() === 'PNG', buf.length + ' bytes');
+}
+
+/* ================================================================== */
 /* 1. LOCAL APP REGRESSION (no cloud)                                  */
 /* ================================================================== */
 console.log('\n— App basics —');
@@ -301,6 +328,34 @@ T.loginLocal('teacher');
 await wait(900);
 report('Local teacher login activates the GitHub cloud automatically', T.q('#sync-pill').textContent === 'Cloud: GitHub', T.q('#sync-pill').textContent);
 report('Local teacher login syncs through GitHub', world.ghFiles.size > 0, [...world.ghFiles.keys()].slice(0, 3).join(', '));
+
+/* ================================================================== */
+/* 2b. OFFLINE BANNER + BACKGROUND REFRESH                             */
+/* ================================================================== */
+console.log('\n— Offline and background refresh —');
+const N = boot(world.fetch, SESSION_SEED());
+await wait(300);
+report('Offline banner is hidden while connected', N.q('#net-banner').hidden);
+N.w.dispatchEvent(new N.w.Event('offline'));
+report('Going offline warns the teacher', N.q('#net-banner').hidden === false && /offline/i.test(N.q('#net-banner').textContent), N.q('#net-banner').textContent);
+report('Offline shifts the layout clear of the banner', N.d.body.classList.contains('offline'));
+N.w.dispatchEvent(new N.w.Event('online'));
+report('Coming back online clears the banner', N.q('#net-banner').hidden === true && !N.d.body.classList.contains('offline'));
+report('No uncaught errors (offline handling)', N.errs.length === 0, N.errs.join(' | '));
+
+const R = boot(world.fetch, SESSION_SEED(), { __AUTO_REFRESH_MS__: 250 });
+await wait(300);
+await R.loginCloud('hsc-wang', 'TeachPass1!');
+report('Auto-refresh device signs in with the school account', R.q('#app').innerHTML.includes('app-shell'));
+const rivalStamp = new Date(Date.now() + 60000).toISOString();
+world.files.set('data/reports/sub_eald.json', {
+  content: { version: 1, updatedAt: rivalStamp, subjectId: 'sub_eald', entries: { st_remote01: { criteriaGrades: ['B', 'B', 'B', 'B', 'B'], overallGrade: 'C', profile: ['Often', 'Often', 'Often', 'Often'], comment: 'WRITTEN ON ANOTHER DEVICE', updatedAt: rivalStamp } }, entryTombstones: {} },
+  updated_at: rivalStamp,
+});
+await wait(1400);
+report('Background refresh pulls another device’s work', JSON.stringify(R.store()).includes('WRITTEN ON ANOTHER DEVICE'));
+report('Background refresh tells the teacher it happened', /Newer report data/.test(R.q('#toast').textContent || ''), R.q('#toast').textContent);
+report('No uncaught errors (background refresh)', R.errs.length === 0, R.errs.join(' | '));
 
 /* ================================================================== */
 /* 3. STATUS MESSAGING (the reported "cloud error / not connected")    */

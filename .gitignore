@@ -1,0 +1,14 @@
+# dependencies and local test output
+node_modules/
+tests/node_modules/
+coverage/
+
+# editor / OS noise
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# logs
+npm-debug.log*
+*.log

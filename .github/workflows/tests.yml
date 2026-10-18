@@ -1,0 +1,36 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  smoke:
+    name: Smoke tests (jsdom)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tests/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check the app script parses
+        run: node -e "const fs=require('fs'),vm=require('vm');const s=fs.readFileSync('../index.html','utf8');const m=s.match(/<script>([\s\S]*)<\/script>/);if(!m)throw new Error('app script not found');new vm.Script(m[1]);console.log('index.html app script parses');"
+
+      - name: Run smoke tests
+        run: npm test
+
+      - name: Check required assets exist
+        run: node -e "const fs=require('fs');for(const f of ['../index.html','../vendor/pdf-libs.js','../assets/emblem.png','../assets/school-name.png','../assets/watermark.png','../cloud-config.json','../supabase-setup.sql']){if(!fs.existsSync(f))throw new Error('missing '+f);console.log('ok '+f);}"
