@@ -912,6 +912,18 @@ console.log('\n— Teacher assignment per subject —');
   report('Saving the assignment writes it to the database',
     (wA.assignments.get('sub_mad') || new Set()).has(wA.wangId),
     [...(wA.assignments.get('sub_mad') || [])].join(','));
+
+  // Teacher accounts tab: admin sees every account and its assignments —
+  // but never a password (hashes cannot be read back; page must not print them)
+  Adm.click(Adm.qa('[data-action="admin-tab"]').find(b => b.dataset.tab === 'accounts'));
+  await wait(600);
+  const acctText = Adm.d.body.textContent;
+  report('Teacher accounts tab lists staff and their assigned subjects',
+    acctText.includes('Ms Wang') && acctText.includes('@hsc-wang') && acctText.includes('Mathematics Advanced'),
+    acctText.slice(0, 160));
+  report('Passwords are never printed on the admin page',
+    acctText.includes('Passwords are not shown here') && acctText.includes('cannot be shown or recovered')
+    && !acctText.includes('TeachPass1!') && !acctText.includes('AdminPass1!'));
   report('No uncaught errors (assignment tests)', T.errs.length === 0 && Adm.errs.length === 0, (T.errs[0] || Adm.errs[0] || ''));
 }
 
