@@ -33,4 +33,4 @@ jobs:
         run: npm test
 
       - name: Check required assets exist
-        run: node -e "const fs=require('fs');for(const f of ['../index.html','../vendor/pdf-libs.js','../assets/emblem.png','../assets/school-name.png','../assets/watermark.png','../cloud-config.json','../supabase-setup.sql','../sw.js']){if(!fs.existsSync(f))throw new Error('missing '+f);console.log('ok '+f);}"
+        run: node -e "const fs=require('fs');for(const f of ['../index.html','../vendor/pdf-libs.js','../assets/emblem.png','../assets/school-name.png','../assets/watermark.png','../cloud-config.json','../supabase-setup.sql','../sw.js','../supabase-migration-2026-10-18-v2-rls-repair.sql','../supabase-migration-2026-10-18-v2-rls-repair.rollback.sql','../SUPABASE-RLS-INVENTORY.md']){if(!fs.existsSync(f))throw new Error('missing '+f);console.log('ok '+f);}"
