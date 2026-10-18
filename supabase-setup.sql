@@ -22,27 +22,61 @@ create table if not exists public.report_files (
   updated_by uuid references auth.users(id)
 );
 
--- 3) Row-level security: only signed-in staff can read/write
+-- 3) Row-level security: only signed-in staff can read/write.
+-- IMPORTANT: never write a policy ON public.profiles that itself queries
+-- public.profiles (e.g. EXISTS (SELECT ... FROM profiles ...)). PostgreSQL
+-- evaluates that policy while reading profiles, which recurses and fails
+-- with 42P17 "infinite recursion detected in policy". Role checks go
+-- through the SECURITY DEFINER helpers below, which bypass RLS safely.
+create or replace function public.is_admin()
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin')
+$$;
+revoke execute on function public.is_admin() from public, anon;
+grant execute on function public.is_admin() to authenticated;
+
+create or replace function public.is_staff()
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (select 1 from public.profiles p where p.id = auth.uid())
+$$;
+revoke execute on function public.is_staff() from public, anon;
+grant execute on function public.is_staff() to authenticated;
+
 alter table public.profiles enable row level security;
 alter table public.report_files enable row level security;
 
 drop policy if exists "staff read profiles" on public.profiles;
 create policy "staff read profiles" on public.profiles
-  for select to authenticated using (true);
+  for select to authenticated using (public.is_staff());
 
 drop policy if exists "admin manage profiles" on public.profiles;
-create policy "admin manage profiles" on public.profiles
-  for all to authenticated
-  using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'))
-  with check (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'));
+drop policy if exists "admin insert profiles" on public.profiles;
+drop policy if exists "admin update profiles" on public.profiles;
+drop policy if exists "admin delete profiles" on public.profiles;
+create policy "admin insert profiles" on public.profiles
+  for insert to authenticated with check (public.is_admin());
+create policy "admin update profiles" on public.profiles
+  for update to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "admin delete profiles" on public.profiles
+  for delete to authenticated using (public.is_admin());
 
 drop policy if exists "staff read report data" on public.report_files;
 create policy "staff read report data" on public.report_files
-  for select to authenticated using (true);
+  for select to authenticated using (public.is_staff());
 
 drop policy if exists "staff write report data" on public.report_files;
 create policy "staff write report data" on public.report_files
-  for all to authenticated using (true) with check (true);
+  for all to authenticated using (public.is_staff()) with check (public.is_staff());
 
 -- 3b) Shared app configuration: the coordinator publishes the Supabase
 --     URL/anon key, GitHub repository and repository token once. Every
@@ -64,11 +98,15 @@ drop policy if exists "admins manage app config" on public.app_config;
 drop policy if exists "staff read app config" on public.app_config;
 drop policy if exists "admins write app config" on public.app_config;
 create policy "staff read app config" on public.app_config
-  for select to authenticated using (true);
+  for select to authenticated using (public.is_staff());
 create policy "admins write app config" on public.app_config
-  for all to authenticated
-  using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'))
-  with check (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'));
+  for insert to authenticated with check (public.is_admin());
+drop policy if exists "admins update app config" on public.app_config;
+create policy "admins update app config" on public.app_config
+  for update to authenticated using (public.is_admin()) with check (public.is_admin());
+drop policy if exists "admins delete app config" on public.app_config;
+create policy "admins delete app config" on public.app_config
+  for delete to authenticated using (public.is_admin());
 
 -- 4) Username sign-in helper (lets teachers log in with a username
 --    instead of an email). Returns the account email for sign-in.

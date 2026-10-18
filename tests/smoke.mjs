@@ -66,7 +66,7 @@ function sbWorld(opts = {}) {
   const W = {
     users: new Map(), profiles: new Map(), files: new Map(), tokens: new Map(), calls: [], conflicts: new Map(),
     appConfig: opts.appConfig || null, publishedSite: opts.publishedSite || null,
-    appConfigMissing: !!opts.appConfigMissing, siteWritable: opts.siteWritable !== false, readFails: opts.readFails || 0, ghFiles: new Map(),
+    appConfigMissing: !!opts.appConfigMissing, profile500: !!opts.profile500, siteWritable: opts.siteWritable !== false, readFails: opts.readFails || 0, ghFiles: new Map(),
   };
   let seq = 1, stamps = 1;
   const nextStamp = () => new Date(Date.now() + (stamps++)).toISOString();
@@ -148,6 +148,7 @@ function sbWorld(opts = {}) {
       }
     }
     if (u.includes('/rest/v1/profiles')) {
+      if (W.profile500) return respond(500, { code: '42P17', message: 'infinite recursion detected in policy for relation "profiles"' });
       const id = decodeURIComponent((u.match(/id=eq\.([^&]+)/) || [])[1] || '');
       const p = W.profiles.get(id);
       return respond(200, p ? [p] : []);
@@ -637,6 +638,104 @@ console.log('\n— Recovery, accessibility, workflow —');
   await wait(1400);
   report('An idle shared computer locks itself', !!idle.q('.login-shell') && idle.d.body.textContent.includes('without activity'));
   report('No uncaught errors (improvements)', app.errs.filter(e => !/boom-test/.test(e)).length === 0, app.errs[0] || '');
+}
+
+
+/* ================================================================== */
+/* 7. REPAIR 2026-10-18: RLS failure visibility, CAL mapping, cohorts  */
+/* ================================================================== */
+console.log('\n— Repair: role failure, CAL profiles, cohort guard —');
+{
+  report('Report tables still render proper <thead> elements',
+    !html.includes('<th scope="col"ead') && html.includes('<thead>'));
+  report('Setup SQL routes role checks through definer helpers, not self-queries in policies',
+    fs.readFileSync(new URL('../supabase-setup.sql', import.meta.url), 'utf8').includes('function public.is_admin()'));
+  const mig = fs.readFileSync(new URL('../supabase-migration-2026-10-18-fix-rls-recursion.sql', import.meta.url), 'utf8');
+  const rb = fs.readFileSync(new URL('../supabase-migration-2026-10-18-fix-rls-recursion.rollback.sql', import.meta.url), 'utf8');
+  report('Reviewed migration + rollback are version controlled',
+    mig.includes('42P17') && mig.includes('security definer') && mig.includes('set search_path = public') && rb.includes('ROLLBACK'));
+  report('No migration disables RLS or adds a service-role key',
+    !/disable row level security/i.test(mig) && !/service_role/i.test(mig + html));
+  report('Help no longer claims a single-file offline app',
+    html.includes('vendor/pdf-libs.js') && html.includes('并非单个文件'));
+  report('Full-backup import warns before crossing academic years',
+    html.includes('COHORT WARNING'));
+
+  // profile lookup 500 -> teacher-level only, explicit error, cloud badge = error
+  const w500 = sbWorld({ profile500: true });
+  const P = boot(w500.fetch, {
+    'bzgfls-report-studio-supabase-v1': JSON.stringify({ url: SB, anon: ANON, enabled: true }),
+    'bzgfls-report-studio-cloud-v1': JSON.stringify({ backend: 'supabase' }),
+  });
+  await wait(250);
+  await P.loginCloud('hsc-admin', 'AdminPass1!');
+  await wait(400);
+  report('Failed profile lookup does NOT promote the user to admin',
+    (P.q('.topbar-meta') || { textContent: '' }).textContent.includes('Teacher session'),
+    (P.q('.topbar-meta') || { textContent: '' }).textContent.slice(0, 60));
+  report('Failed profile lookup is explained, not silent',
+    P.d.body.textContent.includes('could not be verified') || (P.q('#sync-pill') || {}).textContent === 'Cloud: error',
+    (P.q('#sync-pill') || {}).textContent || '');
+  report('Cloud badge refuses to say "school" while role checks fail',
+    (P.q('#sync-pill') || {}).textContent === 'Cloud: error', (P.q('#sync-pill') || {}).textContent || '');
+
+  // CAL import: A-D profile codes normalise; MAD descriptors untouched; preview dots
+  const app = boot(async () => { throw new TypeError('offline test'); });
+  await wait(200);
+  app.loginLocal('admin');
+  // subjects exactly as initialState() builds them from the seed data
+  const seedAll = JSON.parse(html.match(/<script id="seed-data" type="application\/json">([\s\S]*?)<\/script>/)[1]);
+  const subs = seedAll.subjects.map(x => ({ id: 'sub_' + x.code.toLowerCase().replace(/[^a-z0-9]/g, ''), code: x.code, name: x.name, units: x.units, teachers: '', criteria: [...x.criteria], updatedAt: '' }));
+  report('Seed subjects available for CAL test', !!subs);
+  if (subs) {
+    const cal = subs.find(x => x.code === 'CAL'), mad = subs.find(x => x.code === 'MAD');
+    const pkg = {
+      format: 'report-studio-backup-v1', version: 1,
+      data: {
+        version: 1, schoolEn: 'Test School', schoolCn: '', academicYear: '2027', period: 'Academic Year 2027', issueDate: '2027-06-01',
+        staff: { classTeacher: 'T', hscCoordinator: 'H', deputyPrincipal: 'D' },
+        subjects: subs,
+        students: [{ id: 'st_test01', pinyin: 'Ce Shi', english: 'Teststudent', classTeacher: '', subjectIds: [cal.id, mad.id] }],
+        reports: { st_test01: {
+          [cal.id]: { criteriaGrades: ['A', 'B', 'C', 'D'], overallGrade: 'B', profile: ['A', ' b ', 'C', 'd'], comment: 'CAL comment preserved.', updatedAt: '2027-06-01T00:00:00.000Z' },
+          [mad.id]: { criteriaGrades: mad.criteria.map(() => 'A'), overallGrade: 'A', profile: ['Consistently', 'Often', 'Occasionally', 'Rarely'], comment: 'MAD comment.', updatedAt: '2027-06-01T00:00:00.000Z' },
+        } },
+        summaries: {}, settingsUpdatedAt: '', tombstones: { students: {}, subjects: {}, entries: {} },
+      },
+    };
+    app.click(app.qa('.nav-btn').find(b => b.dataset.view === 'admin'));
+    app.click(app.qa('[data-action="admin-tab"]').find(b => b.dataset.tab === 'data'));
+    const ji = app.q('#json-import');
+    const txt = JSON.stringify(pkg);
+    Object.defineProperty(ji, 'files', { value: [{ name: 'backup.json', size: txt.length, text: async () => txt }], configurable: true });
+    ji.dispatchEvent(new app.w.Event('change', { bubbles: true }));
+    await wait(300);
+    const stored = app.store();
+    const calRec = stored.reports.st_test01[cal.id], madRec = stored.reports.st_test01[mad.id];
+    report('CAL A/B/C/D codes normalise to the four descriptors',
+      JSON.stringify(calRec.profile) === JSON.stringify(['Consistently', 'Often', 'Occasionally', 'Rarely']), JSON.stringify(calRec.profile));
+    report('CAL normalisation preserves grades and comment exactly',
+      calRec.overallGrade === 'B' && calRec.criteriaGrades.join(',') === 'A,B,C,D' && calRec.comment === 'CAL comment preserved.');
+    report('Other subjects are not reinterpreted',
+      JSON.stringify(madRec.profile) === JSON.stringify(['Consistently', 'Often', 'Occasionally', 'Rarely']) && madRec.overallGrade === 'A');
+
+    // invalid CAL code is rejected and changes nothing
+    const bad = JSON.parse(txt); bad.data.reports.st_test01[cal.id].profile = ['X', 'A', 'B', 'C'];
+    Object.defineProperty(ji, 'files', { value: [{ name: 'bad.json', size: 10, text: async () => JSON.stringify(bad) }], configurable: true });
+    ji.dispatchEvent(new app.w.Event('change', { bubbles: true }));
+    await wait(300);
+    report('An invalid CAL profile code is rejected without changing data',
+      app.store().reports.st_test01[cal.id].comment === 'CAL comment preserved.');
+
+    // full preview shows the CAL dots
+    app.click(app.qa('.nav-btn').find(b => b.dataset.view === 'reports'));
+    app.click(app.q('[data-action="preview"]'));
+    await wait(120);
+    const stage = app.q('#report-stage').innerHTML;
+    report('Full report preview renders CAL dots from the mapped descriptors',
+      stage.includes('●●●●') && stage.includes('●○○○') && stage.includes('Teststudent'));
+    report('No uncaught errors (repair tests)', app.errs.filter(e => !/boom/.test(e)).length === 0, app.errs[0] || '');
+  }
 }
 
 console.log(fails ? `\n${fails} FAILURES` : '\nALL TESTS PASSED');
