@@ -66,7 +66,7 @@ function sbWorld(opts = {}) {
   const W = {
     users: new Map(), profiles: new Map(), files: new Map(), tokens: new Map(), calls: [], conflicts: new Map(),
     appConfig: opts.appConfig || null, publishedSite: opts.publishedSite || null,
-    appConfigMissing: !!opts.appConfigMissing, profile500: !!opts.profile500, appConfig500: !!opts.appConfig500, assignments: new Map(), siteWritable: opts.siteWritable !== false, readFails: opts.readFails || 0, ghFiles: new Map(),
+    appConfigMissing: !!opts.appConfigMissing, profile500: !!opts.profile500, appConfig500: !!opts.appConfig500, assignments: new Map(), assignmentsFail: !!opts.assignmentsFail, siteWritable: opts.siteWritable !== false, readFails: opts.readFails || 0, ghFiles: new Map(),
   };
   let seq = 1, stamps = 1;
   const nextStamp = () => new Date(Date.now() + (stamps++)).toISOString();
@@ -148,6 +148,7 @@ function sbWorld(opts = {}) {
       }
     }
     if (u.includes('/rest/v1/subject_teachers')) {
+      if (W.assignmentsFail) return respond(500, { message: 'assignments unavailable' });
       if (m === 'GET') { const rows = []; for (const [sid, set] of W.assignments) for (const uid of set) rows.push({ subject_id: sid, user_id: uid }); return respond(200, rows); }
       if (role !== 'admin') return respond(403, { message: 'row-level security' });
       if (m === 'DELETE') { const sid = decodeURIComponent((u.match(/subject_id=eq\.([^&]+)/) || [])[1] || ''); W.assignments.delete(sid); return respond(204, {}); }
@@ -925,6 +926,40 @@ console.log('\n— Teacher assignment per subject —');
     acctText.includes('Passwords are not shown here') && acctText.includes('cannot be shown or recovered')
     && !acctText.includes('TeachPass1!') && !acctText.includes('AdminPass1!'));
   report('No uncaught errors (assignment tests)', T.errs.length === 0 && Adm.errs.length === 0, (T.errs[0] || Adm.errs[0] || ''));
+
+  // Every subject locked to a different teacher: EALD-style account sees ONE subject
+  const wB = sbWorld();
+  wB.assignments.set('sub_eald', new Set([wB.wangId]));
+  for (const sid of ['sub_mad', 'sub_cal', 'sub_bs', 'sub_va', 'sub_phy', 'sub_mex']) wB.assignments.set(sid, new Set([wB.adminId]));
+  const T2 = boot(wB.fetch, SESSION_SEED());
+  await wait(250);
+  await T2.loginCloud('hsc-wang', 'TeachPass1!');
+  await wait(600);
+  T2.click(T2.qa('.nav-btn').find(b => b.dataset.view === 'subjects'));
+  const grid2 = T2.q('.subject-grid') ? T2.q('.subject-grid').textContent : '';
+  report('With every subject assigned, the teacher sees exactly one subject (their own)',
+    T2.qa('.subject-card').length === 1 && grid2.includes('English as an Additional')
+    && !grid2.includes('Mathematics Advanced') && !grid2.includes('Chinese and Literature')
+    && !grid2.includes('Business Studies') && !grid2.includes('Visual Arts') && !grid2.includes('Physics'),
+    grid2.slice(0, 160));
+  // Even a forged Enter-reports click for another subject is refused
+  const forged = T2.d.createElement('button');
+  forged.dataset.action = 'open-subject'; forged.dataset.id = 'sub_mad';
+  T2.d.body.appendChild(forged); T2.click(forged);
+  report('Enter reports for another teacher’s subject is refused',
+    !!T2.q('.subject-grid') && T2.d.body.textContent.includes('assigned to other teachers'));
+
+  // If assignments cannot be loaded, entry locks completely (no open default)
+  const wF = sbWorld({ assignmentsFail: true });
+  const TF = boot(wF.fetch, SESSION_SEED());
+  await wait(250);
+  await TF.loginCloud('hsc-wang', 'TeachPass1!');
+  await wait(600);
+  TF.click(TF.qa('.nav-btn').find(b => b.dataset.view === 'subjects'));
+  report('When assignments cannot load, subject entry is locked with an explanation',
+    TF.qa('.subject-card').length === 0 && TF.d.body.textContent.includes('Subject entry is locked'),
+    TF.d.body.textContent.slice(0, 160));
+  report('No uncaught errors (single-subject lock tests)', T2.errs.length === 0 && TF.errs.length === 0, (T2.errs[0] || TF.errs[0] || ''));
 }
 
 console.log(fails ? `\n${fails} FAILURES` : '\nALL TESTS PASSED');
