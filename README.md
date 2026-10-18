@@ -1,5 +1,31 @@
 # Peter-app2.com
 
+Year 11 Preliminary Student Report Studio — a single-page app published on GitHub Pages.
+
+## How the site is built
+
+```
+index.html              the whole application (UI, data model, cloud sync)   ~58 KB gzipped
+vendor/pdf-libs.js      html2canvas + jsPDF + pako — fetched only when a PDF is
+                        downloaded, so it is never paid for on a normal visit
+assets/*.png            school emblem, school-name image and report watermark
+cloud-config.json       published Supabase URL/anon key + repository settings
+supabase-setup.sql      run once in the Supabase SQL editor
+deploy.ps1              first-time publish helper for Windows
+tests/smoke.mjs         75 assertions; the app is booted in jsdom
+```
+
+Nothing is bundled or transpiled — the files are served exactly as they are committed.
+
+## Working without a connection, and staying current
+
+- **Offline:** a red banner appears at the top of the screen. Everything a teacher types is
+  still saved in that browser; when the connection returns the app syncs automatically.
+- **Staying current:** while a device is signed in, the cloud is re-read every **3 minutes**,
+  whenever the tab is opened again, and immediately after a reconnection. If another computer
+  has newer work, it is merged in (newer entry wins) and a toast says so. A refresh never
+  interrupts an open entry form or unsaved changes.
+
 ## Cloud data
 
 The website code lives in this repository (public). **Student report data never does.**
@@ -134,7 +160,17 @@ cd tests && npm install && npm test
 
 The suite boots the real `index.html` in jsdom against a simulated Supabase (auth, REST,
 RLS-style rules), GitHub Contents API and website file, covering sign-in, publish,
-auto-configuration, role gating, conflict merging and the status messages above.
+auto-configuration, role gating, conflict merging, the status messages above, the offline
+banner, the background refresh and the page-weight limits (external libraries, image files).
+
+**75 assertions.** They also run automatically on every push and pull request through
+`.github/workflows/tests.yml`, which additionally parses the app script and checks that
+`vendor/pdf-libs.js` and the image files are still present.
+
+The browser PDF path (Download PDF) cannot be exercised in jsdom, because jsdom does not
+fetch external scripts. To check it in a browser: open a report preview, press **Download
+PDF**, and confirm `vendor/pdf-libs.js` appears in the network tab at that moment — not on
+the initial page load.
 
 First deployment without any token yet: run **`deploy.ps1`** in Windows PowerShell
 (prompts for the Supabase URL, anon key and a GitHub token, then commits
