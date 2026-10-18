@@ -535,5 +535,109 @@ console.log('\n— Repository token without access —');
   report('No uncaught errors (denied token)', H.errs.length === 0 && H2.errs.filter(e => !/favicon/.test(e)).length === 0, H.errs[0] || H2.errs[0] || '');
 }
 
+
+/* ================================================================== */
+/* 6. RECOVERY, ACCESSIBILITY AND WORKFLOW IMPROVEMENTS                */
+/* ================================================================== */
+console.log('\n— Recovery, accessibility, workflow —');
+{
+  report('Favicon, description and theme colour are declared',
+    html.includes('rel="icon"') && html.includes('name="description"') && html.includes('name="theme-color"'));
+  report('A noscript message is present', html.includes('<noscript>'));
+  report('Table headers declare their scope', (html.match(/<th scope="col"/g) || []).length >= 40,
+    (html.match(/<th scope="col"/g) || []).length + ' scoped headers');
+  report('Brand colours meet WCAG AA on white/surface',
+    html.includes('--gold:#8a652e') && html.includes('--muted:#5c6c83'));
+  report('Reduced-motion preference is honoured', html.includes('prefers-reduced-motion:reduce'));
+  report('Modals are labelled by their heading and Escape closes them',
+    html.includes('aria-labelledby="modal-title"') && html.includes("e.key==='Escape'"));
+  report('Recovery snapshots exist and are taken before destructive actions',
+    html.includes('function createSnapshot') && html.includes("createSnapshot('Before importing") && html.includes("createSnapshot('Before deleting a student')"));
+  report('CSV roster import, draft autosave and roster search are wired',
+    html.includes('function readCsvImport') && html.includes('function saveDraft') && html.includes("e.target.id==='student-search'"));
+  report('Idle auto-lock and a global error banner are installed',
+    html.includes('function lockForIdle') && html.includes('id="fatal-error"') && html.includes("addEventListener('unhandledrejection'"));
+  const sw = fs.readFileSync(new URL('../sw.js', import.meta.url), 'utf8');
+  report('Service worker caches the shell network-first for pages',
+    sw.includes("req.mode === 'navigate'") && sw.includes('vendor/pdf-libs.js') && sw.includes('report-studio-shell-v1'));
+
+  const app = boot(async () => { throw new TypeError('offline test'); });
+  await wait(200);
+  app.loginLocal('admin');
+  app.click(app.qa('.nav-btn').find(b => b.dataset.view === 'admin'));
+  app.click(app.qa('[data-action="admin-tab"]').find(b => b.dataset.tab === 'students'));
+
+  // CSV roster import (header row + two students, one enrolled in MAD by code)
+  const csvInput = app.q('#csv-import');
+  const csvText = 'pinyin,english,classTeacher,subjects\nZhang Wei,Alice,,MAD\nWang Fang,Bob,,';
+  const csvFile = { name: 'roster.csv', size: csvText.length, text: async () => csvText }; // jsdom Files lack .text()
+  Object.defineProperty(csvInput, 'files', { value: [csvFile], configurable: true });
+  csvInput.dispatchEvent(new app.w.Event('change', { bubbles: true }));
+  await wait(300);
+  report('CSV import adds students and enrols by subject code',
+    app.store().students.length === 2 && app.store().students[0].subjectIds.length === 1,
+    JSON.stringify(app.store().students.map(s => s.english)));
+  report('CSV import snapshots the workspace first',
+    JSON.parse(app.ls('bzgfls-report-studio-snapshots-v1') || '[]').length >= 1);
+
+  // Roster search filters rows in place
+  const search = app.q('#student-search');
+  search.value = 'alice';
+  search.dispatchEvent(new app.w.Event('input', { bubbles: true }));
+  const rows = app.qa('tr[data-search]');
+  const aliceRow = rows.find(r => r.dataset.search.includes('alice'));
+  const bobRow = rows.find(r => r.dataset.search.includes('bob'));
+  report('Roster search hides non-matching students',
+    rows.length === 2 && aliceRow.style.display !== 'none' && bobRow.style.display === 'none');
+
+  // Modal: labelled dialog, Escape closes it
+  app.click(app.q('[data-action="student-modal"]'));
+  report('Dialog is labelled by its heading', !!app.q('.modal[aria-labelledby="modal-title"]') && !!app.q('#modal-title'));
+  app.d.dispatchEvent(new app.w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  report('Escape closes the dialog', !app.q('.modal'));
+
+  // Draft autosave: type a comment, then reboot with the same storage
+  app.click(app.qa('.nav-btn').find(b => b.dataset.view === 'subjects'));
+  app.click(app.qa('[data-action="open-subject"]')[1] || app.qa('[data-action="open-subject"]')[0]);
+  app.click(app.q('[data-action="edit-entry"]'));
+  const box = app.q('#comment-box');
+  box.value = 'DRAFT COMMENT typed but never saved.';
+  box.dispatchEvent(new app.w.Event('input', { bubbles: true }));
+  await wait(60);
+  report('Typing a comment autosaves a local draft',
+    (app.ls('bzgfls-report-studio-drafts-v1') || '').includes('DRAFT COMMENT'));
+  report('Comment box requests spellchecking', box.getAttribute('spellcheck') === 'true');
+  const saved = {};
+  for (let i = 0; i < app.w.localStorage.length; i++) { const k = app.w.localStorage.key(i); saved[k] = app.w.localStorage.getItem(k); }
+  const app2 = boot(async () => { throw new TypeError('offline test'); }, saved);
+  await wait(200);
+  // a draft only makes sense after sign-in; the draft store must survive the reboot untouched
+  report('Drafts survive a browser restart', (app2.ls('bzgfls-report-studio-drafts-v1') || '').includes('DRAFT COMMENT'));
+
+  // Snapshot now + delete + restore round trip
+  app.click(app.qa('.nav-btn').find(b => b.dataset.view === 'admin'));
+  app.click(app.qa('[data-action="admin-tab"]').find(b => b.dataset.tab === 'data'));
+  app.click(app.q('[data-action="snapshot-now"]'));
+  app.click(app.qa('[data-action="admin-tab"]').find(b => b.dataset.tab === 'students'));
+  app.click(app.q('[data-action="delete-student"]'));
+  report('Deleting a student removes them', app.store().students.length === 1);
+  app.click(app.qa('[data-action="admin-tab"]').find(b => b.dataset.tab === 'data'));
+  app.click(app.q('[data-action="snapshot-restore"]'));
+  report('Restoring the pre-delete snapshot brings the student back', app.store().students.length === 2);
+
+  // Global error banner
+  app.w.dispatchEvent(new app.w.ErrorEvent('error', { message: 'boom-test' }));
+  report('Uncaught errors surface in the fatal-error banner, not a blank page',
+    app.q('#fatal-error').hidden === false && app.q('#fatal-error').textContent.includes('boom-test'));
+
+  // Idle auto-lock
+  const idle = boot(async () => { throw new TypeError('offline test'); }, {}, { __IDLE_LOCK_MS__: 60 });
+  await wait(200);
+  idle.loginLocal('teacher');
+  await wait(1400);
+  report('An idle shared computer locks itself', !!idle.q('.login-shell') && idle.d.body.textContent.includes('without activity'));
+  report('No uncaught errors (improvements)', app.errs.filter(e => !/boom-test/.test(e)).length === 0, app.errs[0] || '');
+}
+
 console.log(fails ? `\n${fails} FAILURES` : '\nALL TESTS PASSED');
 process.exit(fails ? 1 : 0);
