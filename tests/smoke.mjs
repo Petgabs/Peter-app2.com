@@ -871,7 +871,7 @@ console.log('\n— Teacher assignment per subject —');
     mig3.includes('subject_teachers') && mig3.includes('can_write_subject')
     && fs.existsSync(new URL('../supabase-migration-2026-10-18-v3-subject-assignments.rollback.sql', import.meta.url)));
   report('App fetches assignments and filters the subject grid',
-    html.includes('sbFetchSubjectAccess') && html.includes('visibleSubjects().map') && html.includes('data-action="assign-modal"'));
+    html.includes('sbFetchSubjectAccess') && html.includes('visibleSubjects().map') && html.includes('btn-gold" data-action="assign-modal"') && html.includes('Teacher assignment:'));
 
   const wA = sbWorld();
   wA.assignments.set('sub_eald', new Set([wA.adminId])); // EAL/D locked to admin only
@@ -897,6 +897,9 @@ console.log('\n— Teacher assignment per subject —');
   await wait(600);
   Adm.click(Adm.qa('.nav-btn').find(b => b.dataset.view === 'admin'));
   Adm.click(Adm.qa('[data-action="admin-tab"]').find(b => b.dataset.tab === 'subjects'));
+  report('Subjects tab shows assignment guidance and a gold Assign button per row',
+    Adm.d.body.textContent.includes('Teacher assignment:') && !!Adm.q('.btn-gold[data-action="assign-modal"]')
+    && Adm.qa('[data-action="assign-modal"]').length === Adm.qa('[data-action="subject-modal"]').length - 1);
   const madRowBtn = Adm.qa('[data-action="assign-modal"]')[1]; // seed order: EAL/D, MAD, ...
   Adm.click(madRowBtn);
   await wait(500);
