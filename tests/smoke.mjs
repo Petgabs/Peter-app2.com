@@ -962,5 +962,113 @@ console.log('\n— Teacher assignment per subject —');
   report('No uncaught errors (single-subject lock tests)', T2.errs.length === 0 && TF.errs.length === 0, (T2.errs[0] || TF.errs[0] || ''));
 }
 
+
+/* ================================================================== */
+/* 11. 2026 INDIVIDUAL REPORT TEMPLATE (fictional records only)        */
+/* ================================================================== */
+console.log('\n— 2026 individual report template —');
+{
+  const summarySrc = html.slice(html.indexOf('function rptCourseSummary'), html.indexOf('function rptAppendixStart'));
+  report('Reporting staff replaces certification and signature lines',
+    html.includes('function rptReportingStaff') && html.includes('>Reporting Staff<')
+    && !html.includes('sig-line') && !html.includes('Report Certification') && !html.includes('HSC Coordinator'));
+  report('Units are "Reported", never "Earned"',
+    html.includes('Total Preliminary Units Reported') && !html.includes('Units Earned'));
+  report('Course summary uses words, with no profile total or dot cells',
+    summarySrc.includes("const word=v=>RATING[v]?v:'Never'") && !summarySrc.includes('Profile<br>Total')
+    && !summarySrc.includes('/16') && !summarySrc.includes('DOTS'));
+  report('Issue date is validated and data-driven (not hard-coded for 2026)',
+    !html.includes('2026-10-23') && html.includes('valid calendar date')
+    && html.includes("staff:{classTeacher:cleanText") && html.includes('hscCoordinator:cleanText(staff.hscCoordinator,100)'));
+
+  // Fictional 2026 workspace: one 6-course (12-unit) and one 7-course (13-unit) student
+  const seedAll = JSON.parse(html.match(/<script id="seed-data" type="application\/json">([\s\S]*?)<\/script>/)[1]);
+  const subs = seedAll.subjects.map(x => ({ id: 'sub_' + x.code.toLowerCase().replace(/[^a-z0-9]/g, ''), code: x.code, name: x.name, units: x.units, teachers: 'T. Eacher', criteria: [...x.criteria], updatedAt: '' }));
+  const entry = (eng, profile) => ({ criteriaGrades: null, overallGrade: 'A', profile, comment: eng + ' made steady progress in this fictional entry.', updatedAt: '2026-10-01T00:00:00.000Z' });
+  const mkReports = (eng, ids) => Object.fromEntries(ids.map((id, ix) => {
+    const e = entry(eng, ix === 0 ? ['Consistently', 'Often', 'Occasionally', 'Rarely'] : ['Often', 'Often', 'Consistently', 'Often']);
+    e.criteriaGrades = subs.find(x => x.id === id).criteria.map(() => 'A');
+    return [id, e];
+  }));
+  const six = subs.filter(x => x.code !== 'MEX').map(x => x.id), seven = subs.map(x => x.id);
+  const pkg = { format: 'report-studio-backup-v1', version: 1, data: {
+    version: 1, schoolEn: 'Fictional School', schoolCn: '', academicYear: '2026', period: 'Academic Year 2026', issueDate: '2026-10-23',
+    staff: { classTeacher: 'Ms. Wang Le', hscCoordinator: 'Mr. Peter Paul Gabato', deputyPrincipal: 'Ms. Qian Zhang' },
+    subjects: subs,
+    students: [
+      { id: 'st_fic01', pinyin: 'Jia Ce', english: 'Alex', classTeacher: '', subjectIds: six },
+      { id: 'st_fic02', pinyin: 'Yi Ce', english: 'Bella', classTeacher: 'Ms. Earlier Teacher', subjectIds: seven },
+    ],
+    reports: { st_fic01: mkReports('Alex', six), st_fic02: mkReports('Bella', seven) },
+    summaries: {}, settingsUpdatedAt: '', tombstones: { students: {}, subjects: {}, entries: {} },
+  } };
+  const app = boot(async () => { throw new TypeError('offline test'); });
+  await wait(200);
+  app.loginLocal('admin');
+  app.click(app.qa('.nav-btn').find(b => b.dataset.view === 'admin'));
+  app.click(app.qa('[data-action="admin-tab"]').find(b => b.dataset.tab === 'data'));
+  const ji = app.q('#json-import'); const txt = JSON.stringify(pkg);
+  Object.defineProperty(ji, 'files', { value: [{ name: 'fic2026.json', size: txt.length, text: async () => txt }], configurable: true });
+  ji.dispatchEvent(new app.w.Event('change', { bubbles: true }));
+  await wait(300);
+
+  const openPreview = async id => {
+    app.click(app.qa('.nav-btn').find(b => b.dataset.view === 'reports'));
+    const sel = app.q('#report-student');
+    if (sel && sel.value !== id) { sel.value = id; sel.dispatchEvent(new app.w.Event('change', { bubbles: true })); }
+    app.click(app.q('[data-action="preview"]'));
+    await wait(120);
+    return app.q('#report-stage').innerHTML;
+  };
+  const slice = (t, a, b) => t.slice(t.indexOf(a), t.indexOf(b, t.indexOf(a)));
+
+  // --- 6-course / 12-unit student ---
+  const stageA = await openPreview('st_fic01');
+  report('Issue date prints as 23 October 2026 on cover and final page',
+    (stageA.split('23 October 2026').length - 1) >= 2, String(stageA.split('23 October 2026').length - 1));
+  report('Cover totals the enrolled units as Reported (6 courses = 12 units)',
+    stageA.includes('Total Preliminary Units Reported') && stageA.includes('12 units') && !stageA.includes('Units Earned'));
+  report('Reporting staff prints the three exact names and roles, no signatures',
+    stageA.includes('Ms. Wang Le') && stageA.includes('Mr. Peter Paul Gabato') && stageA.includes('Ms. Qian Zhang')
+    && stageA.includes('Head of HSC') && stageA.includes('>Reporting Staff<')
+    && !stageA.includes('sig-line') && !stageA.includes('Certification'));
+  const csA = slice(stageA, 'Course-by-Course Summary', 'Appendix');
+  report('Course summary profiles are words (never dot symbols, no profile total)',
+    csA.includes('Consistently') && csA.includes('Often') && csA.includes('Rarely')
+    && !csA.includes('●') && !csA.includes('○') && !csA.includes('/16') && !csA.includes('Profile Total'),
+    csA.slice(0, 120));
+  report('Detailed profiles and appendix legend keep their dots',
+    stageA.includes('●●●●') && stageA.includes('Learner Profile Descriptors'));
+  report('Cohort denominators come from actual enrolments (EAL/D = 2 students)',
+    slice(stageA, 'Summary of Results', 'Profile Summary').includes('2/2'));
+  const sheetCount = app.qa('.sheet').length, pageNums = app.qa('.page-n').map(x => x.textContent);
+  report('Preview paginates into several numbered A4 sheets',
+    sheetCount >= 3 && pageNums[pageNums.length - 1] === 'Page ' + sheetCount + ' of ' + sheetCount,
+    sheetCount + ' sheets: ' + pageNums.join(','));
+  app.click(app.q('[data-action="close-preview"]'));
+
+  // --- 7-course / 13-unit student, with a legacy Class Teacher override ---
+  const stageB = await openPreview('st_fic02');
+  report('Seven enrolled courses total 13 units reported',
+    stageB.includes('Total Preliminary Units Reported') && stageB.includes('13 units'));
+  report('MEX cohort denominator is its own enrolment (1), not a fixed number',
+    slice(stageB, 'Summary of Results', 'Profile Summary').includes('1/1'));
+  report('A differing Class Teacher override is honoured in print (not silently overwritten)',
+    stageB.includes('Ms. Earlier Teacher') && !stageB.includes('Ms. Wang Le'));
+  app.click(app.q('[data-action="close-preview"]'));
+
+  // --- Admin: renamed labels + override flagged for review ---
+  app.click(app.qa('.nav-btn').find(b => b.dataset.view === 'admin'));
+  app.click(app.qa('[data-action="admin-tab"]').find(b => b.dataset.tab === 'settings'));
+  const adminText = app.d.body.textContent;
+  report('Admin settings say Reporting staff / Head of HSC and flag the override for review',
+    adminText.includes('Reporting staff') && adminText.includes('Head of HSC')
+    && adminText.includes('Class Teacher overrides to review') && adminText.includes('Bella'),
+    adminText.slice(0, 120));
+  report('Legacy backups keep working: hscCoordinator key still stores the Head of HSC',
+    app.store().staff.hscCoordinator === 'Mr. Peter Paul Gabato', JSON.stringify(app.store().staff));
+  report('No uncaught errors (2026 template tests)', app.errs.length === 0, app.errs[0] || '');
+}
+
 console.log(fails ? `\n${fails} FAILURES` : '\nALL TESTS PASSED');
 process.exit(fails ? 1 : 0);
