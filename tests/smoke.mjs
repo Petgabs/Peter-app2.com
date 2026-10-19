@@ -975,8 +975,10 @@ console.log('\n— 2026 individual report template —');
   report('Units are "Reported", never "Earned"',
     html.includes('Total Preliminary Units Reported') && !html.includes('Units Earned'));
   report('Course summary uses words, with no profile total or dot cells',
-    summarySrc.includes("const word=v=>RATING[v]?v:'Never'") && !summarySrc.includes('Profile<br>Total')
+    summarySrc.includes("const word=v=>RATING[v]?v:'Not set'") && !summarySrc.includes('Profile<br>Total')
     && !summarySrc.includes('/16') && !summarySrc.includes('DOTS'));
+  report('A missing rating can never be mislabeled "Never" (not a supported rating)',
+    !html.includes("'Never'") && !summarySrc.includes('Never'));
   report('Issue date is validated and data-driven (not hard-coded for 2026)',
     !html.includes('2026-10-23') && html.includes('valid calendar date')
     && html.includes("staff:{classTeacher:cleanText") && html.includes('hscCoordinator:cleanText(staff.hscCoordinator,100)'));
@@ -1039,6 +1041,8 @@ console.log('\n— 2026 individual report template —');
     csA.slice(0, 120));
   report('Detailed profiles and appendix legend keep their dots',
     stageA.includes('●●●●') && stageA.includes('Learner Profile Descriptors'));
+  report('A complete report shows no false "Never" and no "Not set" gaps',
+    !stageA.includes('Never') && !csA.includes('Not set'));
   report('Cohort denominators come from actual enrolments (EAL/D = 2 students)',
     slice(stageA, 'Summary of Results', 'Profile Summary').includes('2/2'));
   const sheetCount = app.qa('.sheet').length, pageNums = app.qa('.page-n').map(x => x.textContent);
@@ -1048,7 +1052,14 @@ console.log('\n— 2026 individual report template —');
   app.click(app.q('[data-action="close-preview"]'));
 
   // --- 7-course / 13-unit student, with a legacy Class Teacher override ---
+  app.click(app.qa('.nav-btn').find(b => b.dataset.view === 'reports'));
+  { const sel = app.q('#report-student'); sel.value = 'st_fic02'; sel.dispatchEvent(new app.w.Event('change', { bubbles: true })); }
+  report('Preflight names the Class Teacher override conflict before the report can be final',
+    app.d.body.textContent.includes('Class Teacher override conflict') && app.d.body.textContent.includes('has not been changed'),
+    app.d.body.textContent.slice(0, 160));
   const stageB = await openPreview('st_fic02');
+  report('The conflicting report is marked DRAFT, not final',
+    stageB.includes('DRAFT'));
   report('Seven enrolled courses total 13 units reported',
     stageB.includes('Total Preliminary Units Reported') && stageB.includes('13 units'));
   report('MEX cohort denominator is its own enrolment (1), not a fixed number',
@@ -1065,9 +1076,67 @@ console.log('\n— 2026 individual report template —');
     adminText.includes('Reporting staff') && adminText.includes('Head of HSC')
     && adminText.includes('Class Teacher overrides to review') && adminText.includes('Bella'),
     adminText.slice(0, 120));
+  report('Read-only inventory shows the shared 2026 settings actually in force',
+    adminText.includes('Shared settings inventory (read-only)') && adminText.includes('2026-10-23 / 23 October 2026')
+    && adminText.includes('one') && adminText.includes('workspace'),
+    adminText.slice(0, 120));
   report('Legacy backups keep working: hscCoordinator key still stores the Head of HSC',
     app.store().staff.hscCoordinator === 'Mr. Peter Paul Gabato', JSON.stringify(app.store().staff));
   report('No uncaught errors (2026 template tests)', app.errs.length === 0, app.errs[0] || '');
+}
+
+
+/* ================================================================== */
+/* 12. MISSING / UNRECOGNISED PROFILE RATINGS (fictional only)         */
+/* ================================================================== */
+console.log('\n— Missing profile ratings —');
+{
+  const seedAll = JSON.parse(html.match(/<script id="seed-data" type="application\/json">([\s\S]*?)<\/script>/)[1]);
+  const subs = seedAll.subjects.map(x => ({ id: 'sub_' + x.code.toLowerCase().replace(/[^a-z0-9]/g, ''), code: x.code, name: x.name, units: x.units, teachers: 'T. Eacher', criteria: [...x.criteria], updatedAt: '' }));
+  const eald = subs.find(x => x.code === 'EAL/D');
+  const pkg = { format: 'report-studio-backup-v1', version: 1, data: {
+    version: 1, schoolEn: 'Fictional School', schoolCn: '', academicYear: '2026', period: 'Academic Year 2026', issueDate: '2026-10-23',
+    staff: { classTeacher: 'Ms. Wang Le', hscCoordinator: 'Mr. Peter Paul Gabato', deputyPrincipal: 'Ms. Qian Zhang' },
+    subjects: subs,
+    students: [{ id: 'st_fic03', pinyin: 'San Ce', english: 'Cara', classTeacher: '', subjectIds: [eald.id] }],
+    // 2nd rating is empty; the 4th rating is missing entirely
+    reports: { st_fic03: { [eald.id]: { criteriaGrades: eald.criteria.map(() => 'A'), overallGrade: 'A', profile: ['Consistently', '', 'Often'], comment: 'Cara is a fictional student with an incomplete profile.', updatedAt: '2026-10-01T00:00:00.000Z' } } },
+    summaries: {}, settingsUpdatedAt: '', tombstones: { students: {}, subjects: {}, entries: {} },
+  } };
+  const app = boot(async () => { throw new TypeError('offline test'); });
+  await wait(200);
+  app.loginLocal('admin');
+  app.click(app.qa('.nav-btn').find(b => b.dataset.view === 'admin'));
+  app.click(app.qa('[data-action="admin-tab"]').find(b => b.dataset.tab === 'data'));
+  const ji = app.q('#json-import'); const txt = JSON.stringify(pkg);
+  Object.defineProperty(ji, 'files', { value: [{ name: 'fic-missing.json', size: txt.length, text: async () => txt }], configurable: true });
+  ji.dispatchEvent(new app.w.Event('change', { bubbles: true }));
+  await wait(300);
+  app.click(app.qa('.nav-btn').find(b => b.dataset.view === 'reports'));
+  app.click(app.q('[data-action="preview"]'));
+  await wait(120);
+  const stage = app.q('#report-stage').innerHTML;
+  const cs = stage.slice(stage.indexOf('Course-by-Course Summary'), stage.indexOf('Appendix', stage.indexOf('Course-by-Course Summary')));
+  report('Missing and empty ratings display "Not set" in the course summary',
+    cs.includes('Not set') && cs.includes('Consistently') && cs.includes('Often'), cs.slice(0, 160));
+  report('No false "Never" is printed anywhere for missing data (CAL D still means Rarely)',
+    !stage.includes('Never'));
+  report('The detailed profile also shows "Not set" (dots legend untouched)',
+    (stage.split('Not set').length - 1) >= 2 && stage.includes('○○○○'));
+  report('An incomplete profile keeps the report DRAFT, never final',
+    stage.includes('DRAFT') && (app.q('.preview-bar') || { textContent: '' }).textContent.includes('Draft'));
+  // An unrecognised rating cannot be imported at all — data stays untouched
+  const bad = JSON.parse(txt); bad.data.reports.st_fic03[eald.id].profile = ['Consistently', 'Sometimes', 'Often', 'Rarely'];
+  Object.defineProperty(ji, 'files', { value: [{ name: 'fic-bad.json', size: 10, text: async () => JSON.stringify(bad) }], configurable: true });
+  // the import input lives on the admin Data tab
+  app.click(app.qa('.nav-btn').find(b => b.dataset.view === 'admin'));
+  app.click(app.qa('[data-action="admin-tab"]').find(b => b.dataset.tab === 'data'));
+  app.q('#json-import').dispatchEvent(new app.w.Event('change', { bubbles: true }));
+  await wait(300);
+  report('An unrecognised profile rating is rejected on import without changing data',
+    JSON.stringify(app.store().reports.st_fic03[eald.id].profile) === JSON.stringify(['Consistently', '', 'Often']),
+    JSON.stringify(app.store().reports.st_fic03[eald.id].profile));
+  report('No uncaught errors (missing-rating tests)', app.errs.length === 0, app.errs[0] || '');
 }
 
 console.log(fails ? `\n${fails} FAILURES` : '\nALL TESTS PASSED');

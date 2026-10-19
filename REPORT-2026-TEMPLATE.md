@@ -34,8 +34,9 @@ repository.
    calculation; wording reconciled). 6×2-unit courses = 12; plus 1-unit
    Mathematics Extension 1 = 13.
 5. **Course-by-Course Summary:** The four learner-profile columns now show
-   words (Consistently / Often / Occasionally / Rarely; **Never** when no
-   rating is recorded) instead of dot symbols. The **Profile Total**
+   words (Consistently / Often / Occasionally / Rarely) instead of dot
+   symbols; a missing or empty rating prints **Not set** (see corrections
+   below — it is never labelled "Never"). The **Profile Total**
    column, the `/16` score and the explanatory total footer are removed.
    Detailed per-subject learner profiles (word + dots) and the appendix
    Learner Profile Descriptors legend are unchanged. A–E academic grade
@@ -77,3 +78,31 @@ narrow, and reversible; no student records are touched.
 - A pixel-level PDF check needs a real browser (jsdom has no layout
   engine): the app already blocks printing when `paginateStudent` detects
   overflow; verify visually during step 5 above before release.
+
+## Corrections — 19 Oct 2026 (read-only findings)
+
+- **"Never" removed as a fallback.** `rptCourseSummary` previously printed
+  "Never" for any empty/missing/unrecognised rating. "Never" is not a
+  school-approved rating in this app: the editor, validation
+  (`completeReport` requires one of the four `RATING` frequencies), import
+  checks (unrecognised ratings are rejected with data unchanged) and the
+  appendix legend all define exactly four frequencies, and the approved
+  Chinese and Literature conversion is A=Consistently, B=Often,
+  C=Occasionally, D=Rarely — D can never become "Never". Missing/empty
+  ratings now print **Not set** in both the summary and the detailed
+  profile, and the report stays DRAFT/incomplete. If the school later
+  approves "Never" as a real rating, it must be added consistently to the
+  editor, validation, import, displays and legend as a stored value —
+  never as a display fallback.
+- **Class Teacher override preflight.** A per-student `classTeacher`
+  override that differs from the default now raises an explicit
+  "Class Teacher override conflict" in the Reports preflight, keeps that
+  report DRAFT, and is listed in Admin → School & staff. The student
+  record is never silently altered; an admin must resolve it explicitly.
+- **Years stay separate.** The linked shared settings are a single
+  workspace (currently the 2027 configuration) and must not be overwritten
+  with 2026 values. A read-only "Shared settings inventory" card now shows
+  what is in force, and `YEAR-WORKSPACES.md` proposes a reversible,
+  backed-up year-namespaced workspace design (including the exact approved
+  2026 values) for separate school approval. No production configuration
+  was changed.
