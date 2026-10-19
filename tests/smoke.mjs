@@ -1013,6 +1013,13 @@ console.log('\n— 2026 individual report template —');
   Object.defineProperty(ji, 'files', { value: [{ name: 'fic2026.json', size: txt.length, text: async () => txt }], configurable: true });
   ji.dispatchEvent(new app.w.Event('change', { bubbles: true }));
   await wait(300);
+  // The 2026 backup is filed into its own workspace; open it explicitly.
+  app.click(app.qa('[data-action="admin-tab"]').find(b => b.dataset.tab === 'settings'));
+  app.q('#ws-year').value = '2026';
+  app.click(app.q('[data-action="ws-switch"]'));
+  await wait(150);
+  report('11: switching opens the filed 2026 workspace (2 fictional students)',
+    app.store().academicYear === '2026' && app.store().students.length === 2, app.store().academicYear);
 
   const openPreview = async id => {
     app.click(app.qa('.nav-btn').find(b => b.dataset.view === 'reports'));
@@ -1112,6 +1119,12 @@ console.log('\n— Missing profile ratings —');
   Object.defineProperty(ji, 'files', { value: [{ name: 'fic-missing.json', size: txt.length, text: async () => txt }], configurable: true });
   ji.dispatchEvent(new app.w.Event('change', { bubbles: true }));
   await wait(300);
+  app.click(app.qa('[data-action="admin-tab"]').find(b => b.dataset.tab === 'settings'));
+  app.q('#ws-year').value = '2026';
+  app.click(app.q('[data-action="ws-switch"]'));
+  await wait(150);
+  report('12: switching opens the filed 2026 workspace',
+    app.store().academicYear === '2026' && app.store().students.length === 1, app.store().academicYear);
   app.click(app.qa('.nav-btn').find(b => b.dataset.view === 'reports'));
   app.click(app.q('[data-action="preview"]'));
   await wait(120);
@@ -1137,6 +1150,93 @@ console.log('\n— Missing profile ratings —');
     JSON.stringify(app.store().reports.st_fic03[eald.id].profile) === JSON.stringify(['Consistently', '', 'Often']),
     JSON.stringify(app.store().reports.st_fic03[eald.id].profile));
   report('No uncaught errors (missing-rating tests)', app.errs.length === 0, app.errs[0] || '');
+}
+
+/* ------------------------------------------------------------------ */
+console.log('\n— Year workspaces —');
+{
+  const app = boot(async () => { throw new TypeError('offline test'); });
+  app.loginLocal ? app.loginLocal('admin') : null;
+  const seed = app.store(); // default template workspace
+  const ARCH = 'bzgfls-year11-preliminary-report-studio-v1:y';
+  const mkPkg = (year, stuId, pinyin, en, staff, issueDate) => {
+    const subjects = seed.subjects.map(s => ({ ...s, criteria: ['Uses strategies', 'Solves problems'] }));
+    const eald = subjects[0];
+    return { format: 'report-studio-backup-v1', version: 1, exportedAt: '2026-10-19T00:00:00.000Z', data: { version: 1,
+      schoolEn: seed.schoolEn, schoolCn: seed.schoolCn, academicYear: year, period: 'Academic Year ' + year, issueDate,
+      staff, subjects,
+      students: [{ id: stuId, pinyin, english: en, classTeacher: '', subjectIds: [eald.id], updatedAt: '2026-10-19T00:00:00.000Z' }],
+      reports: { [stuId]: { [eald.id]: { criteriaGrades: ['A', 'A'], overallGrade: 'A', profile: ['Consistently', 'Often', 'Occasionally', 'Rarely'], comment: 'Fictional comment.', updatedAt: '2026-10-19T00:00:00.000Z', updatedBy: 'Fictional' } } },
+      summaries: { [stuId]: { overview: 'O', strengths: 'S', development: 'D', updatedAt: '2026-10-19T00:00:00.000Z' } },
+      updatedAt: '2026-10-19T00:00:00.000Z', settingsUpdatedAt: '2026-10-19T00:00:00.000Z', summariesUpdatedAt: '2026-10-19T00:00:00.000Z',
+      tombstones: { students: {}, subjects: {}, entries: {}, summaries: {} } } };
+  };
+  const importJSON = async pkg => {
+    app.click(app.qa('.nav-btn').find(b => b.dataset.view === 'admin'));
+    app.click(app.qa('[data-action="admin-tab"]').find(b => b.dataset.tab === 'data'));
+    const ji = app.q('#json-import'); const txt = JSON.stringify(pkg);
+    Object.defineProperty(ji, 'files', { value: [{ name: 'fictional.json', size: txt.length, text: async () => txt }], configurable: true });
+    ji.dispatchEvent(new app.w.Event('change', { bubbles: true }));
+    await wait(300);
+  };
+  const gotoSettings = () => {
+    app.click(app.qa('.nav-btn').find(b => b.dataset.view === 'admin'));
+    app.click(app.qa('[data-action="admin-tab"]').find(b => b.dataset.tab === 'settings'));
+  };
+  const staff2027 = { classTeacher: 'Ms. Ada Byron', hscCoordinator: 'Mr. Alan Turing', deputyPrincipal: 'Dr. Katherine Johnson' };
+  const staff2026 = { classTeacher: 'Ms. Wang Le', hscCoordinator: 'Mr. Peter Paul Gabato', deputyPrincipal: 'Ms. Qian Zhang' };
+
+  report('13: a fresh device starts on the default template year, empty',
+    app.store().academicYear === '2027' && app.store().students.length === 0, app.store().academicYear);
+
+  await importJSON(mkPkg('2027', 'st_y27', 'Liu Yang', 'Dana', staff2027, '2027-06-04'));
+  report('13: a same-year backup imports into the open workspace as before',
+    app.store().academicYear === '2027' && app.store().students.length === 1 && app.store().students[0].english === 'Dana',
+    JSON.stringify(app.store().students.map(s => s.english)));
+
+  await importJSON(mkPkg('2026', 'st_y26', 'Wang Xiao', 'Alex', staff2026, '2026-10-23'));
+  report('13: a 2026 backup is filed into its own workspace and does NOT replace 2027',
+    app.store().academicYear === '2027' && app.store().students.length === 1 && app.store().students[0].english === 'Dana'
+      && String(app.ls(ARCH + '2026') || '').includes('"Alex"'),
+    app.store().academicYear + ':' + app.store().students.map(s => s.english).join(','));
+
+  gotoSettings();
+  app.q('#ws-year').value = '2026';
+  app.click(app.q('[data-action="ws-switch"]'));
+  await wait(150);
+  const s26 = app.store();
+  report('13: switching to 2026 restores its own roster, staff and date, unchanged',
+    s26.academicYear === '2026' && s26.students.length === 1 && s26.students[0].english === 'Alex'
+      && s26.staff.classTeacher === 'Ms. Wang Le' && s26.staff.hscCoordinator === 'Mr. Peter Paul Gabato'
+      && s26.staff.deputyPrincipal === 'Ms. Qian Zhang' && s26.issueDate === '2026-10-23',
+    JSON.stringify({ y: s26.academicYear, n: s26.students.map(s => s.english), staff: s26.staff, d: s26.issueDate }));
+  report('13: the workspace card names the year-scoped cloud location',
+    /years\/2026\/data/.test(app.d.body.innerHTML));
+
+  app.q('#ws-new-year').value = '2028';
+  app.click(app.q('[data-action="ws-create"]'));
+  await wait(150);
+  const s28 = app.store();
+  report('13: a new year starts empty of students with the subject template',
+    s28.academicYear === '2028' && s28.students.length === 0 && s28.subjects.length === 7 && s28.period === 'Academic Year 2028',
+    JSON.stringify({ y: s28.academicYear, n: s28.students.length, subs: s28.subjects.length, period: s28.period }));
+
+  gotoSettings();
+  app.q('#ws-year').value = '2027';
+  app.click(app.q('[data-action="ws-switch"]'));
+  await wait(150);
+  const back27 = app.store();
+  report('13: switching back to 2027 restores Dana and the 2027 staff/date untouched',
+    back27.academicYear === '2027' && back27.students.length === 1 && back27.students[0].english === 'Dana'
+      && back27.staff.classTeacher === 'Ms. Ada Byron' && back27.issueDate === '2027-06-04',
+    JSON.stringify({ y: back27.academicYear, n: back27.students.map(s => s.english), staff: back27.staff, d: back27.issueDate }));
+  report('13: per-year archives keep the other workspaces for later reopening',
+    String(app.ls(ARCH + '2026') || '').includes('"Alex"') && String(app.ls(ARCH + '2028') || '').includes('"2028"'));
+  report('13: the settings year field refuses to relabel the open workspace',
+    html.includes('Academic years are kept separate'));
+  report('13: cloud paths are year-scoped in code while the legacy year keeps data/...',
+    html.includes("return 'years/'+y+'/';") && html.includes('function logicalSyncFileList')
+      && html.includes('function physicalPath') && html.includes('belongs to another year'));
 }
 
 console.log(fails ? `\n${fails} FAILURES` : '\nALL TESTS PASSED');
