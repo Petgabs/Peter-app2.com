@@ -1247,9 +1247,10 @@ console.log('\n— Year-workspace security (v4) —');
   report('14: v4 migration registers the verified 2027 legacy workspace server-side',
     sqlV4.includes('workspace_years') && sqlV4.includes("(2027, '', true)") && sqlV4.includes('report_path_info'));
   report('14: v4 write gate is fail-closed for unknown, shared and unassigned paths',
-    sqlV4.includes('if not info.is_report then return false')
-      && sqlV4.includes('if not found then return false')
+    sqlV4.includes('where i.is_report') && sqlV4.includes('t.academic_year = i.academic_year')
+      && sqlV4.includes('t.user_id = auth.uid()')
       && !sqlV4.includes('sid = p_path then return true')
+      && !/return true; end if;\s*sid :=/.test(sqlV4)
       && sqlV4.includes("'^years/([0-9]{4})/data/reports/([A-Za-z0-9_-]+)\\.json$'"));
   report('14: assignments are year-specific and settings content must match its path year',
     sqlV4.includes('primary key (academic_year, subject_id, user_id)')
@@ -1352,6 +1353,61 @@ console.log('\n— Year-workspace security (v4) —');
     'roster unchanged; mismatch explained');
   report('14: no uncaught errors (year-workspace security tests)', capp.errs.length === 0 && app.errs.length === 0 && dev.errs.length === 0,
     (capp.errs[0] || app.errs[0] || dev.errs[0] || ''));
+}
+
+/* ------------------------------------------------------------------ */
+console.log('\n— Import year checks + in-flight sync (15) —');
+{
+  // A teacher starter for another year must not convert the open workspace
+  const app = boot(async () => { throw new TypeError('offline test'); });
+  app.loginLocal('admin');
+  const seed = app.store();
+  const starter = { format: 'report-studio-starter-v1', version: 1,
+    subject: { ...seed.subjects[0] }, roster: [], academicYear: '2026',
+    schoolEn: seed.schoolEn, schoolCn: seed.schoolCn, period: 'Academic Year 2026' };
+  app.click(app.qa('.nav-btn').find(b => b.dataset.view === 'admin'));
+  app.click(app.qa('[data-action="admin-tab"]').find(b => b.dataset.tab === 'data'));
+  const ji = app.q('#json-import'); const txt = JSON.stringify(starter);
+  Object.defineProperty(ji, 'files', { value: [{ name: 'starter.json', size: txt.length, text: async () => txt }], configurable: true });
+  ji.dispatchEvent(new app.w.Event('change', { bubbles: true }));
+  await wait(300);
+  report('15: a starter for another year is rejected, open workspace unchanged',
+    app.store().academicYear === '2027' && app.store().students.length === 0
+      && app.errs.some(e => e.includes('This starter is for academic year 2026')),
+    app.store().academicYear);
+
+  // Slow in-flight sync cancelled by a year switch writes nothing further
+  const W = sbWorld();
+  const slowFetch = async (url, o = {}) => {
+    if (String(url).includes('/rest/v1/report_files') && (o.method || 'GET').toUpperCase() === 'GET')
+      await wait(350);
+    return W.fetch(url, o);
+  };
+  const capp = boot(slowFetch, SESSION_SEED());
+  await capp.loginCloud('hsc-admin', 'AdminPass1!');
+  await wait(2500);
+  capp.click(capp.qa('.nav-btn').find(b => b.dataset.view === 'sync'));
+  capp.click(capp.q('[data-action="sync-now"]'));
+  await wait(60); // push is now in flight (its reads take ~350 ms each)
+  const callsAtSwitch = W.calls.length;
+  capp.click(capp.qa('.nav-btn').find(b => b.dataset.view === 'admin'));
+  capp.click(capp.qa('[data-action="admin-tab"]').find(b => b.dataset.tab === 'settings'));
+  capp.q('#ws-new-year').value = '2026';
+  capp.click(capp.q('[data-action="ws-create"]'));
+  await wait(8000);
+  const lateLegacyWrites = W.calls.slice(callsAtSwitch).filter(c =>
+    (c.method === 'POST' || c.method === 'PATCH') && String(c.url).includes('/rest/v1/report_files')
+    && decodeURIComponent(String(c.url)).includes('path=eq.data/'));
+  report('15: switching year mid-sync cancels the in-flight push (no legacy writes after the switch)',
+    lateLegacyWrites.length === 0 && capp.store().academicYear === '2026',
+    JSON.stringify(lateLegacyWrites.map(c => c.url)));
+  report('15: after the switch, sync resumes against the new year prefix only',
+    !!W.files.get('years/2026/data/settings.json')
+      && (!W.files.get('data/settings.json') || String(W.files.get('data/settings.json').content?.academicYear || '') === '2027'),
+    [...W.files.keys()].join(' | '));
+  report('15: no uncaught errors (import/in-flight tests)',
+    capp.errs.length === 0 && app.errs.filter(e => !e.includes('Import failed')).length === 0,
+    (capp.errs[0] || app.errs.find(e => !e.includes('Import failed')) || ''));
 }
 
 console.log(fails ? `\n${fails} FAILURES` : '\nALL TESTS PASSED');

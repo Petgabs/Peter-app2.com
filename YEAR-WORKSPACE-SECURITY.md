@@ -60,6 +60,8 @@ Design (fail-closed):
   or `years/<YYYY>/`, one of the four shared documents or
   `reports/<subjectId>.json` with a strict subject-id charset. Malformed,
   unexpected, traversal or unregistered-year paths yield no row → denied.
+  (Parser and gate are `LANGUAGE sql` so they can be executed verbatim
+  in the automated PostgreSQL test below.)
 - **`can_write_subject()`**: admins may write everything; a teacher may
   write a subject-report file **only if assigned to that subject for that
   academic year**; teachers may not write shared documents in any year
@@ -111,18 +113,32 @@ Design (fail-closed):
 
 ## 4. Fictional test evidence
 
-`tests/smoke.mjs` section 14 (no real records anywhere): SQL structure
-and rollback review; legacy-year pinning; the old-2026-browser device
-keeping its own workspace; import-conflict decline/accept with recovery
-snapshot; cloud sync writing a new year only under `years/2026/...`
-while legacy 2027 settings/roster stay intact; a tampered remote year
-stopping sync with nothing overwritten. The RLS decision matrix
-(assigned/unassigned × legacy/year × shared/report × unknown/traversal
-paths, teacher vs admin) is scripted for a disposable database in the
-`.test.sql` file above and must be run there before production sign-off.
+`tests/smoke.mjs` sections 14–15 (no real records anywhere): SQL
+structure and rollback review; legacy-year pinning; the old-2026-browser
+device keeping its own workspace; import-conflict decline/accept with
+recovery snapshot; a teacher starter for another year rejected without
+touching the open workspace; cloud sync writing a new year only under
+`years/2026/...` while legacy 2027 settings/roster stay intact; a
+tampered remote year stopping sync with nothing overwritten; and a
+**slow in-flight sync cancelled by a year switch** writing nothing
+further to the old year's paths.
 
-Full suite: **200 assertions, ALL TESTS PASSED** (local; CI runs the
-same suite on the PR). Report rules regression-checked as before:
+**RLS execution (new):** `tests/rls-pglite.mjs` (`npm run test:rls`,
+also in CI) applies the *unmodified* v4 migration in a real PostgreSQL
+engine (PGlite) with fictional Admin/Teacher accounts and executes:
+the 19-case `can_write_subject` decision matrix (assigned/unassigned ×
+legacy/year × shared/report × unknown/traversal/empty paths), the
+settings-year trigger (mismatch rejected, match accepted, unknown path
+rejected), and actual RLS enforcement as a least-privileged role —
+INSERT allowed only into the teacher's own assigned subject, INSERT
+into another year's/unassigned/shared paths denied by policy, UPDATE
+and DELETE of another teacher's file affecting 0 rows with the file
+left untouched. **Result: 29/29 PASSED.** The same matrix is scripted
+for a disposable Supabase project (real Auth accounts + JWT claims) in
+the `.test.sql` file, which remains part of the sign-off below.
+
+Full suite: **204 assertions, ALL TESTS PASSED** (local; CI runs both
+suites on the PR). Report rules regression-checked as before:
 exactly four ratings (`Consistently/Often/Occasionally/Rarely`; "Never"
 is never an option or fallback), missing ratings print **Not set** and
 keep the report DRAFT, CAL A–D map to the four words, no signature
@@ -138,7 +154,9 @@ lines, **Head of HSC** label with `hscCoordinator` storage,
 3. In a **disposable** Supabase project (or a Supabase branch), apply
    `supabase-setup.sql`, then the v4 migration, create the three
    fictional accounts listed in the `.test.sql`, and run it — record the
-   "ALL OK" notice and the expected policy denials.
+   "ALL OK" notice and the expected policy denials. (The engine-level
+   execution in §4 already passed 29/29; this step additionally proves
+   the real Supabase Auth/JWT wiring.)
 4. Confirm `Petgabs/report-data` is **Private** in the GitHub UI.
 5. Only then, with explicit school approval recorded, apply the v4
    migration to production (Supabase SQL editor / migration tooling),
