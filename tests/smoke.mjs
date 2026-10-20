@@ -66,6 +66,7 @@ function sbWorld(opts = {}) {
   const W = {
     users: new Map(), profiles: new Map(), files: new Map(), tokens: new Map(), calls: [], conflicts: new Map(),
     appConfig: opts.appConfig || null, publishedSite: opts.publishedSite || null,
+    v4: !!opts.v4, workspaceYears: new Map([[2027, { academic_year: 2027, path_prefix: '', is_legacy: true }]]),
     appConfigMissing: !!opts.appConfigMissing, profile500: !!opts.profile500, appConfig500: !!opts.appConfig500, assignments: new Map(), assignmentsFail: !!opts.assignmentsFail, siteWritable: opts.siteWritable !== false, readFails: opts.readFails || 0, ghFiles: new Map(),
   };
   let seq = 1, stamps = 1;
@@ -146,6 +147,12 @@ function sbWorld(opts = {}) {
         W.appConfig = JSON.parse(o.body).value; W.appConfigWrites = (W.appConfigWrites || 0) + 1;
         return respond(201, []);
       }
+    }
+    if (u.includes('/rest/v1/workspace_years')) {
+      if (!W.v4) return respond(404, { code: 'PGRST205', message: 'relation "workspace_years" not found' });
+      if (m === 'GET') { const y = (u.match(/academic_year=eq\.([^&]+)/) || [])[1]; return respond(200, [...W.workspaceYears.values()].filter(r => !y || String(r.academic_year) === decodeURIComponent(y))); }
+      if (m === 'POST') { const r = JSON.parse(o.body); W.workspaceYears.set(Number(r.academic_year), r); return respond(201, []); }
+      return respond(200, []);
     }
     if (u.includes('/rest/v1/subject_teachers')) {
       if (W.assignmentsFail) return respond(500, { message: 'assignments unavailable' });
@@ -1321,7 +1328,7 @@ console.log('\n— Year-workspace security (v4) —');
     app.store().academicYear === '2027' && app.store().students.length === 0, app.store().academicYear);
 
   // --- cloud isolation: a new year syncs to its own prefix only
-  const W = sbWorld();
+  const W = sbWorld({ v4: true });
   const capp = boot(W.fetch, SESSION_SEED());
   await capp.loginCloud('hsc-admin', 'AdminPass1!');
   await wait(1600);
@@ -1377,7 +1384,7 @@ console.log('\n— Import year checks + in-flight sync (15) —');
     app.store().academicYear);
 
   // Slow in-flight sync cancelled by a year switch writes nothing further
-  const W = sbWorld();
+  const W = sbWorld({ v4: true });
   const slowFetch = async (url, o = {}) => {
     if (String(url).includes('/rest/v1/report_files') && (o.method || 'GET').toUpperCase() === 'GET')
       await wait(350);
@@ -1408,6 +1415,36 @@ console.log('\n— Import year checks + in-flight sync (15) —');
   report('15: no uncaught errors (import/in-flight tests)',
     capp.errs.length === 0 && app.errs.filter(e => !e.includes('Import failed')).length === 0,
     (capp.errs[0] || app.errs.find(e => !e.includes('Import failed')) || ''));
+}
+
+/* ------------------------------------------------------------------ */
+console.log('\n— Fail-closed while v4 is missing (16) —');
+{
+  report('16: the deployed app refuses new-year cloud writes without positive v4 verification',
+    html.includes('requireV4ForYear') && html.includes('workspace is BLOCKED')
+      && html.includes("rest/v1/workspace_years?academic_year=eq."));
+
+  const W = sbWorld(); // no v4 registry, like production today
+  const capp = boot(W.fetch, SESSION_SEED());
+  await capp.loginCloud('hsc-admin', 'AdminPass1!');
+  await wait(1600);
+  capp.click(capp.qa('.nav-btn').find(b => b.dataset.view === 'admin'));
+  capp.click(capp.qa('[data-action="admin-tab"]').find(b => b.dataset.tab === 'settings'));
+  capp.q('#ws-new-year').value = '2026';
+  capp.click(capp.q('[data-action="ws-create"]'));
+  await wait(2200);
+  report('16: creating a 2026 workspace locally still works (device-only)',
+    capp.store().academicYear === '2026', capp.store().academicYear);
+  report('16: but NOTHING is written to years/<year>/ in the school cloud',
+    ![...W.files.keys()].some(k => k.startsWith('years/')), [...W.files.keys()].join(' | '));
+  capp.click(capp.qa('.nav-btn').find(b => b.dataset.view === 'sync'));
+  report('16: the admin is told exactly why sync is blocked',
+    capp.d.body.innerHTML.includes('workspace is BLOCKED')
+      && capp.d.body.innerHTML.includes('v4 year-permission upgrade'),
+    (capp.q('#sync-error-text')?.textContent || '').slice(0, 120));
+  report('16: the legacy 2027 workspace kept syncing normally meanwhile',
+    String((W.files.get('data/settings.json') || {}).content?.academicYear || '') === '2027');
+  report('16: no uncaught errors (fail-closed tests)', capp.errs.length === 0, capp.errs[0] || '');
 }
 
 console.log(fails ? `\n${fails} FAILURES` : '\nALL TESTS PASSED');

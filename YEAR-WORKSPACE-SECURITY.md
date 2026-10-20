@@ -7,7 +7,10 @@ Production remains exactly as inventoried below until the approval
 checkpoint at the end is completed. Until then, **do not use, import or
 sync real student records into newly created year workspaces** — in the
 live database, year-prefixed report writes are still governed by the
-flawed v3 gate described next.
+flawed v3 gate described next. As an interim control, the deployed
+website now **fails closed**: it refuses to write `years/<year>/...` to
+the school cloud unless the v4 registry has been positively verified
+for that year (§3), and tells the admin why.
 
 ## 1. Read-only inventory (verified 2026-10-20, no writes)
 
@@ -105,6 +108,17 @@ Design (fail-closed):
 - **Mirroring privacy**: `mirrorToGitHub()` verifies via the GitHub API
   that the destination repository is private (checked once per repo)
   and disables mirroring with an explicit error otherwise.
+- **Fail-closed while v4 is missing (new)**: before any cloud write
+  (Supabase push or GitHub mirror) for a non-legacy year, the app queries
+  `workspace_years` for a row whose `academic_year` and `path_prefix`
+  match the open workspace. Table missing (pre-v4 404), no row, or any
+  read failure ⇒ the write is refused with an explicit *BLOCKED*
+  message; admins also get that message when opening an unverified
+  new-year workspace. There is no silent fallback to the permissive v3
+  behaviour. The legacy 2027 workspace is unaffected. (Fictional test:
+  smoke §16 — with no registry, a created 2026 workspace stays
+  device-only, nothing reaches `years/...`, and the legacy workspace
+  keeps syncing.)
 - **Year-aware assignments in the app**: assignment reads prefer the v4
   `academic_year` column and filter to the open year, falling back to
   the legacy shape on pre-v4 databases so nothing breaks before the
@@ -145,27 +159,59 @@ keep the report DRAFT, CAL A–D map to the four words, no signature
 lines, **Head of HSC** label with `hscCoordinator` storage,
 **Preliminary Units Reported**, word-based Course-by-Course Summary.
 
-## 5. ⛔ Admin approval checkpoint (required before any production write)
+## 5. Deployment plan & ⛔ explicit approval request
 
-1. Review this pack, the v4 migration and its rollback.
-2. Take a private backup: export the current workspace JSON (Admin →
-   Data transfer) and keep the existing Supabase schema backup
-   (`backup_20261018` + a fresh one if available).
-3. In a **disposable** Supabase project (or a Supabase branch), apply
-   `supabase-setup.sql`, then the v4 migration, create the three
-   fictional accounts listed in the `.test.sql`, and run it — record the
-   "ALL OK" notice and the expected policy denials. (The engine-level
-   execution in §4 already passed 29/29; this step additionally proves
-   the real Supabase Auth/JWT wiring.)
+**Requested decision (school project owner):** approve (a) creating a
+disposable Supabase test environment, (b) a controlled-window
+application of the v4 migration to the Year 11 Report production
+project, and (c) the post-change verification below. Nothing in (b)
+runs before (a) passes and approval is recorded here.
+
+### Pre-production (owner/admin actions)
+1. Review this pack, the v4 migration and its rollback. Note the
+   rollback warning: it restores the **known insecure v3 gate** and
+   deletes non-2027 assignment rows — an emergency escape hatch only.
+2. Private backups (off-repo, never in public GitHub): (i) Admin →
+   Data transfer → Export backup of the current 2027 workspace;
+   (ii) fresh in-database snapshot of `subject_teachers`,
+   `report_files` policy/function definitions next to the existing
+   `backup_20261018` schema. Current read-only inventory:
+   `SUPABASE-INVENTORY-PRE-V4-2026-10-20.md`.
+3. **Disposable Auth/JWT run (mandatory, currently blocked here):**
+   branching requires Pro and the org is at the Free-plan 2-project
+   limit (see the inventory file), so the owner must upgrade, free a
+   project slot, or provide another organisation. Then: apply
+   `supabase-setup.sql` + the unchanged v4 SQL, create the three
+   fictional accounts from the `.test.sql` (Admin / assigned Teacher /
+   unassigned Teacher), and run it — expected: all gate assertions OK;
+   teacher INSERT/UPDATE/DELETE denied outside their year-subject;
+   shared documents admin-only; mismatch settings rejected by the
+   trigger. Record the output.
 4. Confirm `Petgabs/report-data` is **Private** in the GitHub UI.
-5. Only then, with explicit school approval recorded, apply the v4
-   migration to production (Supabase SQL editor / migration tooling),
-   re-run the read-only inventory query, and confirm counts are
-   unchanged and `workspace_years` holds exactly the 2027 legacy row.
-6. Keep real records out of newly created year workspaces until steps
-   1–5 are complete and the fictional RLS run has passed.
 
-**Not claimed:** year workspaces are not production-safe until the
-disposable-database RLS run (step 3) and the post-migration inventory
-(step 5) have passed. No production schema or data write was made for
-this review pack.
+### Exact production change list (controlled window, after approval)
+- Apply `supabase-migration-2026-10-20-v4-year-scoped-permissions.sql`
+  unchanged to project `sdjuojttlxciispgttwx` only. It creates
+  `workspace_years` (+2027 legacy row, RLS, staff-read/admin-write),
+  adds `subject_teachers.academic_year` (existing 7 rows become 2027),
+  replaces `report_path_info`/`can_write_subject` with fail-closed
+  versions, adds the settings-year trigger, and recreates the three
+  gated `report_files` policies. **No `report_files` row is edited or
+  deleted; no year-prefixed files are created.**
+
+### Post-change verification (read-only, then fictional writes only)
+5. Re-run the inventory queries: `workspace_years` = exactly the 2027
+   legacy row; `subject_teachers.academic_year` present (7 rows, all
+   2027); `can_write_subject` is the new full-path logic; RLS enabled
+   with the gated policies; counts unchanged (11 files, 0
+   year-prefixed, settings still 2027).
+6. With fictional accounts only, repeat the `.test.sql` matrix against
+   production-shaped permissions; only then enable real-data use of
+   new-year workspaces (the app verifies the registry per year before
+   writing, §3).
+7. If any check fails: stop syncing new-year workspaces, follow the
+   rollback file's recovery steps, and do not claim success.
+
+**Not claimed:** year workspaces are not production-safe until steps
+3, 5 and 6 have passed. No production schema or data write was made
+for this review pack.
