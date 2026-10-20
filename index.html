@@ -100,6 +100,29 @@ async function registerCloudWorkspaceYear(year){
 function remoteYearMismatchMessage(ctx,ry){return 'Remote workspace year mismatch: the cloud file at '+(ctx.prefix||'(original shared location)')+'data/settings.json belongs to academic year '+ry+', but this workspace is '+ctx.year+'. Sync stopped before anything was overwritten. An admin must export a backup of both workspaces and resolve this explicitly.';}
 function syncContext(){const year=String((typeof data!=='undefined'&&data&&data.academicYear)||'');return {year,prefix:workspacePrefixFor(year),epoch:syncEpoch};}
 function syncStale(ctx){return !ctx||ctx.epoch!==syncEpoch||ctx.year!==String(data&&data.academicYear||'');}
+let v4VerifiedYears=new Set();
+async function v4YearVerified(year){
+  year=String(year||'');
+  if(year===LEGACY_CLOUD_YEAR)return true; // legacy paths predate v4 and are unchanged
+  if(v4VerifiedYears.has(year))return true;
+  if(!sbReady())return false;
+  try{
+    const res=await fetch(sbRoot()+'/rest/v1/workspace_years?academic_year=eq.'+encodeURIComponent(year)+'&select=academic_year,path_prefix,is_legacy',{method:'GET',headers:sbHeaders()});
+    if(!res.ok)return false; // table missing (pre-v4) or unreadable: NOT verified
+    const rows=await res.json();
+    const ok=Array.isArray(rows)&&rows.some(r=>String(r.academic_year)===year&&String(r.path_prefix)===workspacePrefixFor(year));
+    if(ok)v4VerifiedYears.add(year);
+    return ok;
+  }catch(err){return false;}
+}
+async function requireV4ForYear(ctx){
+  // Fail closed: while production lacks the v4 registry + fail-closed
+  // policies, the old permissive gate would accept year-prefixed writes
+  // without any subject-assignment check. Refuse to write them at all.
+  if(ctx.year===LEGACY_CLOUD_YEAR)return;
+  if(await v4YearVerified(ctx.year))return;
+  throw Error('Cloud sync for the '+ctx.year+' workspace is BLOCKED: the v4 year-permission upgrade (workspace registry + fail-closed database policies) has not been verified on the school cloud, so nothing was written. Local work stays on this device. An admin must complete the v4 deployment in YEAR-WORKSPACE-SECURITY.md before real records are used in a new-year workspace.');
+}
 async function verifyRemoteYear(t,ctx){
   // Before any cloud write (and on pull): the remote settings document at
   // this workspace's own prefix must belong to the same academic year.
@@ -124,6 +147,7 @@ function switchWorkspace(year){
   initialSyncPromise=null;
   persist();render();
   registerCloudWorkspaceYear(year);
+  if(year!==LEGACY_CLOUD_YEAR&&authRole==='admin')v4YearVerified(year).then(ok=>{if(!ok)toast('Cloud sync is BLOCKED for the '+year+' workspace until the v4 year-permission upgrade is applied and verified (YEAR-WORKSPACE-SECURITY.md). You can prepare locally, but do not enter real student records yet.','error');});
   if(typeof sbSession!=='undefined'&&sbSession&&sbSession.user)sbFetchSubjectAccess();
   bootSync();
   toast('Now working in the '+year+' workspace. Other years are unchanged.');
@@ -408,6 +432,7 @@ async function mirrorToGitHub(){
   try{
     const ctx=syncContext(); // fixed year/prefix for the whole operation
     if(!await ghMirrorRepoIsPrivate()){syncState.mirrorError='GitHub mirror disabled: '+syncConfig.repo+' is not a private repository. Student data is never mirrored to a public repository.';return;}
+    await requireV4ForYear(ctx);
     await verifyRemoteYear(ghTransport,ctx);
     const payloads=buildSyncPayloads();
     for(const logical of Object.keys(payloads)){
@@ -704,6 +729,7 @@ async function pushRemote(){
     const t=transport();if(!t)throw Error('Cloud sync is not configured.');
     if(cloudConfig.backend==='supabase')await sbEnsureSession();
     const ctx=syncContext(); // fixed year/prefix for the whole push
+    await requireV4ForYear(ctx);
     await verifyRemoteYear(t,ctx);
     for(let attempt=0;attempt<2;attempt++){
       const payloads=buildSyncPayloads();
