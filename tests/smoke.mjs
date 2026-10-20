@@ -620,14 +620,14 @@ console.log('\n— Recovery, accessibility, workflow —');
   box.dispatchEvent(new app.w.Event('input', { bubbles: true }));
   await wait(60);
   report('Typing a comment autosaves a local draft',
-    (app.ls('bzgfls-report-studio-drafts-v1') || '').includes('DRAFT COMMENT'));
+    (app.ls('bzgfls-report-studio-drafts-v1:y2027') || '').includes('DRAFT COMMENT'));
   report('Comment box requests spellchecking', box.getAttribute('spellcheck') === 'true');
   const saved = {};
   for (let i = 0; i < app.w.localStorage.length; i++) { const k = app.w.localStorage.key(i); saved[k] = app.w.localStorage.getItem(k); }
   const app2 = boot(async () => { throw new TypeError('offline test'); }, saved);
   await wait(200);
   // a draft only makes sense after sign-in; the draft store must survive the reboot untouched
-  report('Drafts survive a browser restart', (app2.ls('bzgfls-report-studio-drafts-v1') || '').includes('DRAFT COMMENT'));
+  report('Drafts survive a browser restart', (app2.ls('bzgfls-report-studio-drafts-v1:y2027') || '').includes('DRAFT COMMENT'));
 
   // Snapshot now + delete + restore round trip
   app.click(app.qa('.nav-btn').find(b => b.dataset.view === 'admin'));
@@ -1237,6 +1237,121 @@ console.log('\n— Year workspaces —');
   report('13: cloud paths are year-scoped in code while the legacy year keeps data/...',
     html.includes("return 'years/'+y+'/';") && html.includes('function logicalSyncFileList')
       && html.includes('function physicalPath') && html.includes('belongs to another year'));
+}
+
+/* ------------------------------------------------------------------ */
+console.log('\n— Year-workspace security (v4) —');
+{
+  const sqlV4 = fs.readFileSync(new URL('../supabase-migration-2026-10-20-v4-year-scoped-permissions.sql', import.meta.url), 'utf8');
+  const sqlV4rb = fs.readFileSync(new URL('../supabase-migration-2026-10-20-v4-year-scoped-permissions.rollback.sql', import.meta.url), 'utf8');
+  report('14: v4 migration registers the verified 2027 legacy workspace server-side',
+    sqlV4.includes('workspace_years') && sqlV4.includes("(2027, '', true)") && sqlV4.includes('report_path_info'));
+  report('14: v4 write gate is fail-closed for unknown, shared and unassigned paths',
+    sqlV4.includes('if not info.is_report then return false')
+      && sqlV4.includes('if not found then return false')
+      && !sqlV4.includes('sid = p_path then return true')
+      && sqlV4.includes("'^years/([0-9]{4})/data/reports/([A-Za-z0-9_-]+)\\.json$'"));
+  report('14: assignments are year-specific and settings content must match its path year',
+    sqlV4.includes('primary key (academic_year, subject_id, user_id)')
+      && sqlV4.includes('check_report_file_year') && sqlV4.includes('report_files_year_check'));
+  report('14: rollback restores the v3 gate and removes the registry',
+    sqlV4rb.includes('drop table if exists public.workspace_years') && sqlV4rb.includes('can_write_subject'));
+  report('14: legacy year is the verified server year, never the first local year',
+    html.includes("const LEGACY_CLOUD_YEAR='2027'") && !html.includes('if(!yearIndex.legacyYear)yearIndex.legacyYear=y'));
+  report('14: sync operations capture a fixed year/prefix and verify the remote year first',
+    html.includes('function syncContext()') && html.includes('async function verifyRemoteYear')
+      && html.includes('Remote workspace year mismatch') && html.includes('workspace changed during sync'));
+  report('14: GitHub mirroring is disabled unless the destination repo is verified private',
+    html.includes('ghMirrorRepoIsPrivate') && html.includes('is not a private repository'));
+  report('14: inventory help distinguishes the 2027 legacy location from year-prefixed paths',
+    html.includes('2027 legacy year') && html.includes('years/&lt;year&gt;/data/'));
+
+  // --- (a) an old 2026-browser device must not claim the 2027 cloud paths
+  const base = boot(async () => { throw new TypeError('offline test'); });
+  base.loginLocal('admin');
+  const template = base.store();
+  const oldLocal2026 = { ...template, academicYear: '2026', students: [{ id: 'st_old26', pinyin: 'Jiu Ce', english: 'Bong', classTeacher: '', subjectIds: [template.subjects[0].id], updatedAt: '2026-01-01T00:00:00.000Z' }] };
+  const dev = boot(async () => { throw new TypeError('offline test'); }, {
+    'bzgfls-year11-preliminary-report-studio-v1': JSON.stringify(oldLocal2026),
+  });
+  dev.loginLocal('admin');
+  dev.click(dev.qa('.nav-btn').find(b => b.dataset.view === 'admin'));
+  dev.click(dev.qa('[data-action="admin-tab"]').find(b => b.dataset.tab === 'settings'));
+  report('14: old local 2026 data stays a 2026 workspace and does not claim legacy paths',
+    dev.store().academicYear === '2026' && dev.store().students.length === 1 && dev.store().students[0].english === 'Bong'
+      && /years\/2026\/data/.test(dev.d.body.innerHTML)
+      && String(dev.ls('bzgfls-report-studio-years-v1') || '').includes('"legacyYear":"2027"'),
+    dev.store().academicYear + ':' + dev.store().students.map(s => s.english).join(','));
+
+  // --- (c) importing into a year that already has data needs an explicit choice
+  const app = boot(async () => { throw new TypeError('offline test'); });
+  app.loginLocal('admin');
+  const seed = app.store();
+  const mkPkg14 = (en, stuId) => {
+    const subjects = seed.subjects.map(s => ({ ...s, criteria: ['Uses strategies'] }));
+    return { format: 'report-studio-backup-v1', version: 1, exportedAt: '2026-10-19T00:00:00.000Z', data: { version: 1,
+      schoolEn: seed.schoolEn, schoolCn: seed.schoolCn, academicYear: '2026', period: 'Academic Year 2026', issueDate: '2026-10-23',
+      staff: { classTeacher: 'Ms. Wang Le', hscCoordinator: 'Mr. Peter Paul Gabato', deputyPrincipal: 'Ms. Qian Zhang' }, subjects,
+      students: [{ id: stuId, pinyin: 'Ce Shi', english: en, classTeacher: '', subjectIds: [subjects[0].id], updatedAt: '2026-10-19T00:00:00.000Z' }],
+      reports: {}, summaries: {}, updatedAt: '2026-10-19T00:00:00.000Z', settingsUpdatedAt: '2026-10-19T00:00:00.000Z', summariesUpdatedAt: '2026-10-19T00:00:00.000Z',
+      tombstones: { students: {}, subjects: {}, entries: {}, summaries: {} } } };
+  };
+  const import14 = async pkg => {
+    app.click(app.qa('.nav-btn').find(b => b.dataset.view === 'admin'));
+    app.click(app.qa('[data-action="admin-tab"]').find(b => b.dataset.tab === 'data'));
+    const ji = app.q('#json-import'); const txt = JSON.stringify(pkg);
+    Object.defineProperty(ji, 'files', { value: [{ name: 'fic.json', size: txt.length, text: async () => txt }], configurable: true });
+    ji.dispatchEvent(new app.w.Event('change', { bubbles: true }));
+    await wait(300);
+  };
+  const ARCH = 'bzgfls-year11-preliminary-report-studio-v1:y2026';
+  await import14(mkPkg14('Alex', 'st_i26a'));
+  app.w.confirm = () => false;
+  await import14(mkPkg14('Charlie', 'st_i26b'));
+  report('14: declining the replacement choice keeps the existing 2026 workspace',
+    String(app.ls(ARCH) || '').includes('"Alex"') && !String(app.ls(ARCH) || '').includes('"Charlie"'));
+  app.w.confirm = () => true;
+  await import14(mkPkg14('Charlie', 'st_i26b'));
+  report('14: accepting replaces it only after a recovery copy is snapshotted',
+    String(app.ls(ARCH) || '').includes('"Charlie"')
+      && String(app.ls('bzgfls-report-studio-snapshots-v1') || '').includes('Recovery copy of the 2026 workspace')
+      && String(app.ls('bzgfls-report-studio-snapshots-v1') || '').includes('"Alex"'));
+  report('14: the open 2027 workspace was never touched by the 2026 imports',
+    app.store().academicYear === '2027' && app.store().students.length === 0, app.store().academicYear);
+
+  // --- cloud isolation: a new year syncs to its own prefix only
+  const W = sbWorld();
+  const capp = boot(W.fetch, SESSION_SEED());
+  await capp.loginCloud('hsc-admin', 'AdminPass1!');
+  await wait(1600);
+  capp.click(capp.qa('.nav-btn').find(b => b.dataset.view === 'admin'));
+  capp.click(capp.qa('[data-action="admin-tab"]').find(b => b.dataset.tab === 'settings'));
+  capp.q('#ws-new-year').value = '2026';
+  capp.click(capp.q('[data-action="ws-create"]'));
+  await wait(1800);
+  const y26settings = W.files.get('years/2026/data/settings.json');
+  const legacySettings = W.files.get('data/settings.json');
+  report('14: cloud sync writes the new year only under years/<year>/ and leaves legacy 2027 intact',
+    !!y26settings && String(y26settings.content.academicYear) === '2026'
+      && !!legacySettings && String(legacySettings.content.academicYear) === '2027'
+      && capp.store().academicYear === '2026',
+    JSON.stringify({ y26: y26settings && y26settings.content.academicYear, legacy: legacySettings && legacySettings.content.academicYear }));
+  report('14: the legacy roster (fictional Ming) was not moved into the 2026 workspace',
+    JSON.stringify((W.files.get('data/roster.json') || {}).content || {}).includes('Ming')
+      && !JSON.stringify((W.files.get('years/2026/data/roster.json') || {}).content || {}).includes('Ming'));
+
+  // remote-year mismatch: tamper with the 2026 cloud settings, sync must stop
+  const beforeRoster = JSON.stringify(W.files.get('years/2026/data/roster.json').content);
+  W.files.set('years/2026/data/settings.json', { content: { ...y26settings.content, academicYear: '2027' }, updated_at: new Date().toISOString() });
+  capp.click(capp.qa('.nav-btn').find(b => b.dataset.view === 'sync'));
+  capp.click(capp.q('[data-action="sync-now"]'));
+  await wait(1500);
+  report('14: a remote year mismatch stops sync and overwrites nothing',
+    JSON.stringify(W.files.get('years/2026/data/roster.json').content) === beforeRoster
+      && capp.d.body.innerHTML.includes('Remote workspace year mismatch'),
+    'roster unchanged; mismatch explained');
+  report('14: no uncaught errors (year-workspace security tests)', capp.errs.length === 0 && app.errs.length === 0 && dev.errs.length === 0,
+    (capp.errs[0] || app.errs[0] || dev.errs[0] || ''));
 }
 
 console.log(fails ? `\n${fails} FAILURES` : '\nALL TESTS PASSED');

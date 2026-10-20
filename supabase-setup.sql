@@ -80,11 +80,37 @@ drop policy if exists "staff write report data" on public.report_files;
 -- staff accounts to subjects; writes to a subject's report file
 -- are then limited to its assigned teachers (admins always may;
 -- a subject with no assignments stays open to all staff).
+create table if not exists public.workspace_years (
+  academic_year integer primary key check (academic_year between 2000 and 2100),
+  path_prefix text not null unique,
+  is_legacy boolean not null default false,
+  created_at timestamptz not null default now(),
+  constraint workspace_years_prefix_shape
+    check (path_prefix = '' or path_prefix = 'years/' || academic_year || '/')
+);
+insert into public.workspace_years (academic_year, path_prefix, is_legacy)
+values (2027, '', true) on conflict (academic_year) do nothing;
+alter table public.workspace_years enable row level security;
+drop policy if exists "workspace years staff read" on public.workspace_years;
+create policy "workspace years staff read" on public.workspace_years
+  for select to authenticated using (public.is_staff());
+drop policy if exists "workspace years admin insert" on public.workspace_years;
+create policy "workspace years admin insert" on public.workspace_years
+  for insert to authenticated with check (public.is_admin());
+drop policy if exists "workspace years admin update" on public.workspace_years;
+create policy "workspace years admin update" on public.workspace_years
+  for update to authenticated using (public.is_admin()) with check (public.is_admin());
+drop policy if exists "workspace years admin delete" on public.workspace_years;
+create policy "workspace years admin delete" on public.workspace_years
+  for delete to authenticated using (public.is_admin());
+
 create table if not exists public.subject_teachers (
   subject_id text not null,
   user_id uuid not null references public.profiles(id) on delete cascade,
+  academic_year integer not null default 2027
+    references public.workspace_years(academic_year),
   created_at timestamptz not null default now(),
-  primary key (subject_id, user_id)
+  primary key (academic_year, subject_id, user_id)
 );
 alter table public.subject_teachers enable row level security;
 drop policy if exists "subject teachers staff read" on public.subject_teachers;
@@ -101,29 +127,91 @@ drop policy if exists "profiles admin read" on public.profiles;
 create policy "profiles admin read" on public.profiles
   for select to authenticated using (public.is_admin());
 
+create or replace function public.report_path_info(p_path text)
+returns table (academic_year integer, is_report boolean, subject_id text)
+language plpgsql security definer set search_path = public stable
+as $$
+declare m text[]; y integer;
+begin
+  if p_path ~ '^data/(settings|roster|subjects|summaries)\.json$' then
+    select w.academic_year into y from public.workspace_years w where w.is_legacy limit 1;
+    if y is null then return; end if;
+    return query select y, false, null::text; return;
+  end if;
+  m := regexp_match(p_path, '^data/reports/([A-Za-z0-9_-]+)\.json$');
+  if m is not null then
+    select w.academic_year into y from public.workspace_years w where w.is_legacy limit 1;
+    if y is null then return; end if;
+    return query select y, true, m[1]; return;
+  end if;
+  m := regexp_match(p_path, '^years/([0-9]{4})/data/(settings|roster|subjects|summaries)\.json$');
+  if m is not null then
+    y := m[1]::integer;
+    if exists (select 1 from public.workspace_years w where w.academic_year = y and w.path_prefix = 'years/' || y || '/') then
+      return query select y, false, null::text;
+    end if;
+    return;
+  end if;
+  m := regexp_match(p_path, '^years/([0-9]{4})/data/reports/([A-Za-z0-9_-]+)\.json$');
+  if m is not null then
+    y := m[1]::integer;
+    if exists (select 1 from public.workspace_years w where w.academic_year = y and w.path_prefix = 'years/' || y || '/') then
+      return query select y, true, m[2];
+    end if;
+    return;
+  end if;
+  return;
+end;
+$$;
+revoke execute on function public.report_path_info(text) from public, anon;
+grant execute on function public.report_path_info(text) to authenticated;
+
 create or replace function public.can_write_subject(p_path text)
 returns boolean
-language plpgsql
-security definer
-set search_path = public
-stable
+language plpgsql security definer set search_path = public stable
 as $$
-declare sid text;
+declare info record;
 begin
   if public.is_admin() then return true; end if;
-  sid := regexp_replace(p_path, '^data/reports/(.+)\.json$', '');
-  if sid = p_path then return true; end if;
-  if not exists (select 1 from public.subject_teachers t where t.subject_id = sid) then
-    return true;
-  end if;
+  if not public.is_staff() then return false; end if;
+  select * into info from public.report_path_info(p_path) limit 1;
+  if not found then return false; end if;
+  if not info.is_report then return false; end if;
   return exists (
     select 1 from public.subject_teachers t
-    where t.subject_id = sid and t.user_id = auth.uid()
+    where t.academic_year = info.academic_year
+      and t.subject_id = info.subject_id
+      and t.user_id = auth.uid()
   );
 end;
 $$;
 revoke execute on function public.can_write_subject(text) from public, anon;
 grant execute on function public.can_write_subject(text) to authenticated;
+
+create or replace function public.check_report_file_year()
+returns trigger
+language plpgsql security definer set search_path = public
+as $$
+declare info record;
+begin
+  select * into info from public.report_path_info(NEW.path) limit 1;
+  if not found then
+    raise exception 'Unknown report file path: %', NEW.path;
+  end if;
+  if NEW.path like '%/data/settings.json' or NEW.path = 'data/settings.json' then
+    if (NEW.content ? 'academicYear')
+       and coalesce(NEW.content ->> 'academicYear', '') <> info.academic_year::text then
+      raise exception 'Settings academicYear % does not match workspace year % for path %',
+        NEW.content ->> 'academicYear', info.academic_year, NEW.path;
+    end if;
+  end if;
+  return NEW;
+end;
+$$;
+drop trigger if exists report_files_year_check on public.report_files;
+create trigger report_files_year_check
+  before insert or update on public.report_files
+  for each row execute function public.check_report_file_year();
 
 create policy "report files gated insert" on public.report_files
   for insert to authenticated

@@ -29,8 +29,9 @@ an **admin-only action requiring separate approval** (steps below).
 - Browser storage: the active workspace keeps the original key
   (`bzgfls-year11-preliminary-report-studio-v1`); each year is additionally
   archived under that key + `:y<year>`, with a small year index alongside.
-- Cloud paths: the **first year a device registers** (the "legacy" year —
-  2027 on current devices) keeps syncing to the original paths
+- Cloud paths: the **verified legacy year — 2027**, confirmed read-only
+  against the shared server settings (never whichever year a browser
+  happened to open first) keeps syncing to the original paths
   `data/settings.json`, `data/roster.json`, `data/subjects.json`,
   `data/summaries.json`, `data/reports/<subjectId>.json`, so nothing moves
   and no migration of the shared workspace is needed. Every additional year
@@ -41,6 +42,13 @@ an **admin-only action requiring separate approval** (steps below).
   legacy year never changed location, all existing devices and cloud files
   keep working exactly as before; `years/<year>/...` files and the local
   per-year archives are simply ignored by older code.
+
+> **Security note (2026-10-20):** server-side permissions for
+> year-prefixed paths are fixed by the prepared v4 migration, which is
+> **not yet applied to production**. See `YEAR-WORKSPACE-SECURITY.md`
+> for the inventory, migration, fictional RLS tests and the admin
+> approval checkpoint. Do not put real records into new year workspaces
+> until that checkpoint is complete.
 
 ## Before any real single-workspace migration (unchanged gate)
 
