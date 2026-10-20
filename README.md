@@ -187,7 +187,7 @@ RLS-style rules), GitHub Contents API and website file, covering sign-in, publis
 auto-configuration, role gating, conflict merging, the status messages above, the offline
 banner, the background refresh and the page-weight limits (external libraries, image files).
 
-**184 assertions**, including recovery snapshots, CSV import, draft restore across a
+**200 assertions**, including recovery snapshots, CSV import, draft restore across a
 restart, modal Escape/focus behaviour, the idle lock, the error banner, the
 42P17 role-failure behaviour, CAL A-D mapping (imported and already-stored)
 and the first-login preview/PDF race. They also run automatically on every push and pull request through
